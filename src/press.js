@@ -141,37 +141,10 @@ float shapeMask(vec2 q, float pick, float o) {
   return step(abs(length(q - 0.5) - 0.34), 0.10);                     /* ring */
 }
 
-void main() {
-  vec2 uv = vUv;
+/* ── the full material stack as a function, so the fold zone can
+   sample it three times for TRUE whole-image chromatic splitting ── */
+vec3 material(vec2 uv) {
   vec3 col;
-
-  /* ── the portfolio fold, screen-space: content bends exactly where
-     it crosses the viewport edge. Within a band next to the fold
-     line, sampling compresses toward the line (paper going over a
-     roller); foldZ drives shading + chromatic fringe afterwards. ── */
-  float foldZ = 0.0;
-  const float w = 0.17;
-  if (uLines.x < 0.999) {              /* exiting through the top */
-    float s = uLines.x - vUv.y;
-    if (s > 0.0 && s < w) {
-      float q = s / w;
-      uv.y = uLines.x - pow(q, 0.6) * w;
-      float zone = 1.0 - q;
-      uv.x += sin(uv.y * 42.0 + uTime * 5.0) * 0.011 * zone;
-      foldZ = max(foldZ, zone);
-    }
-  }
-  if (uLines.y > 0.001) {              /* entering from the bottom */
-    float s = vUv.y - uLines.y;
-    if (s > 0.0 && s < w) {
-      float q = s / w;
-      uv.y = uLines.y + pow(q, 0.6) * w;
-      float zone = 1.0 - q;
-      uv.x += sin(uv.y * 42.0 + uTime * 5.0) * 0.011 * zone;
-      foldZ = max(foldZ, zone);
-    }
-  }
-
   if (uMode < 0.5) {
     /* FOLD — soft curtains: displacement + shading bands */
     float waves = 2.0 + uP.x * 8.0;
@@ -263,17 +236,52 @@ void main() {
     col = mix(col, uInk2 * 0.8, clamp(a2 - aC, 0.0, 1.0) * 0.7);
     col = mix(col, uInk, aC);
   }
+  return col;
+}
 
-  /* at the fold: curvature shadow, crease light, chromatic fringe
-     along the direction of travel — the portfolio's fold language */
+void main() {
+  vec2 uv = vUv;
+
+  /* ── the portfolio fold, screen-space: content bends exactly where
+     it crosses the viewport edge. Within a band next to the fold
+     line, sampling compresses hard toward the line (paper going over
+     a roller); foldZ then drives the chromatic split + shading. ── */
+  float foldZ = 0.0;
+  const float w = 0.30;
+  if (uLines.x < 0.999) {              /* exiting through the top */
+    float s = uLines.x - vUv.y;
+    if (s > 0.0 && s < w) {
+      float q = s / w;
+      uv.y = uLines.x - pow(q, 0.45) * w;
+      float zone = 1.0 - q;
+      uv.x += sin(uv.y * 34.0 + uTime * 4.0) * 0.012 * zone;
+      foldZ = zone;
+    }
+  }
+  if (uLines.y > 0.001) {              /* entering from the bottom */
+    float s = vUv.y - uLines.y;
+    if (s > 0.0 && s < w) {
+      float q = s / w;
+      uv.y = uLines.y + pow(q, 0.45) * w;
+      float zone = 1.0 - q;
+      uv.x += sin(uv.y * 34.0 + uTime * 4.0) * 0.012 * zone;
+      foldZ = max(foldZ, zone);
+    }
+  }
+
+  vec3 col;
   if (foldZ > 0.001) {
-    float ca = foldZ * foldZ;
-    float aR = texture2D(uType, uv + vec2(0.0, 0.02 * ca)).a;
-    float aB = texture2D(uType, uv - vec2(0.0, 0.02 * ca)).a;
-    col = mix(col, vec3(1.0, 0.18, 0.24), aR * ca * 0.6);
-    col = mix(col, vec3(0.0, 0.75, 1.0), aB * ca * 0.6);
-    col *= 1.0 - foldZ * 0.45;
-    col += pow(foldZ, 6.0) * 0.4;   /* the crease catching light */
+    /* true chromatic aberration: R/G/B sampled at diverging points
+       along the direction of travel — the whole image splits, not
+       just the type. This is the portfolio's fold signature. */
+    vec2 off = vec2(0.0, 0.028 * foldZ * foldZ + 0.004 * foldZ);
+    col.r = material(uv + off).r;
+    col.g = material(uv).g;
+    col.b = material(uv - off).b;
+    col *= 1.0 - foldZ * 0.5;          /* bending into shadow */
+    col += pow(foldZ, 5.0) * 0.45;     /* the crease catching light */
+  } else {
+    col = material(uv);
   }
 
   gl_FragColor = vec4(col, 1.0);
