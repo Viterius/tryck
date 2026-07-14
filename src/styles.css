@@ -1,0 +1,75 @@
+/* ── TRYCK chrome — a print shop, not a portfolio ─────────────────
+   Paper, ink, mono labels. The posters get to be loud; the tool
+   around them stays quiet. */
+
+:root {
+  --paper: #edeae1;
+  --ink: #161513;
+  --line: rgba(22, 21, 19, 0.16);
+  --mono: "IBM Plex Mono", ui-monospace, monospace;
+  --display: "Anton", sans-serif;
+}
+
+* { margin: 0; padding: 0; box-sizing: border-box; }
+
+html, body {
+  background: var(--paper);
+  color: var(--ink);
+  font-family: var(--mono);
+  -webkit-font-smoothing: antialiased;
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
+}
+
+button {
+  font-family: inherit;
+  color: inherit;
+  background: none;
+  border: none;
+  cursor: pointer;
+}
+
+input {
+  font-family: inherit;
+  color: inherit;
+}
+
+:focus-visible {
+  outline: 2px solid var(--ink);
+  outline-offset: 3px;
+  border-radius: 2px;
+}
+
+.label {
+  font-size: 10px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  opacity: 0.55;
+}
+
+.swatch-btn[aria-pressed="true"] { box-shadow: 0 0 0 2px var(--paper), 0 0 0 3.5px var(--ink); }
+
+.opt-btn {
+  font-size: 11px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  padding: 8px 14px;
+  border: 1px solid var(--line);
+  border-radius: 3px;
+  transition: background 0.15s ease, color 0.15s ease;
+}
+.opt-btn[aria-pressed="true"] { background: var(--ink); color: var(--paper); border-color: var(--ink); }
+.opt-btn:hover:not([aria-pressed="true"]) { background: rgba(22,21,19,0.06); }
+
+.press-btn {
+  font-family: var(--display);
+  font-size: 20px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  background: var(--ink);
+  color: var(--paper);
+  padding: 14px 28px 12px;
+  border-radius: 3px;
+  transition: transform 0.08s ease;
+}
+.press-btn:active { transform: translateY(2px); }
