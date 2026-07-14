@@ -120,8 +120,11 @@ varying vec2 vUv;
 uniform sampler2D uType;
 uniform sampler2D uAtlas;
 uniform vec3 uPaper, uInk, uInk2;
-uniform float uMode, uTime, uKick;
+uniform float uMode, uTime;
 uniform vec2 uP;
+/* screen-space fold lines: x = viewport-top line, y = viewport-bottom
+   line, both in this canvas's v space (y-up). Inactive: x=1, y=0. */
+uniform vec2 uLines;
 
 float hash(vec2 p) { return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
 
@@ -142,23 +145,31 @@ void main() {
   vec2 uv = vUv;
   vec3 col;
 
-  /* ── the press moment: the sheet accordion-folds out of existence.
-     uKick 0→1 squeezes the poster toward its center line in pleats;
-     alpha goes 0 outside the shrinking band so the sheet truly
-     disappears (canvas is transparent there). Reverse = unfold. ── */
-  float t = uKick;
-  float band = 0.0;
-  float inBand = 1.0;
-  if (t > 0.003) {
-    float squeeze = 1.0 - 0.92 * t;
-    float y = (vUv.y - 0.5) / max(squeeze, 0.06);
-    inBand = step(abs(y), 0.5);
-    vec2 fuv = vec2(vUv.x, y + 0.5);
-    float ph = fuv.y * 37.7;                       /* ~6 pleats */
-    band = (0.5 - 0.5 * cos(ph)) * t;
-    fuv.y += sin(ph) * 0.018 * t;
-    fuv.x += sin(fuv.y * 9.0 + ph * 0.5) * 0.02 * t;
-    uv = fuv;
+  /* ── the portfolio fold, screen-space: content bends exactly where
+     it crosses the viewport edge. Within a band next to the fold
+     line, sampling compresses toward the line (paper going over a
+     roller); foldZ drives shading + chromatic fringe afterwards. ── */
+  float foldZ = 0.0;
+  const float w = 0.17;
+  if (uLines.x < 0.999) {              /* exiting through the top */
+    float s = uLines.x - vUv.y;
+    if (s > 0.0 && s < w) {
+      float q = s / w;
+      uv.y = uLines.x - pow(q, 0.6) * w;
+      float zone = 1.0 - q;
+      uv.x += sin(uv.y * 42.0 + uTime * 5.0) * 0.011 * zone;
+      foldZ = max(foldZ, zone);
+    }
+  }
+  if (uLines.y > 0.001) {              /* entering from the bottom */
+    float s = vUv.y - uLines.y;
+    if (s > 0.0 && s < w) {
+      float q = s / w;
+      uv.y = uLines.y + pow(q, 0.6) * w;
+      float zone = 1.0 - q;
+      uv.x += sin(uv.y * 42.0 + uTime * 5.0) * 0.011 * zone;
+      foldZ = max(foldZ, zone);
+    }
   }
 
   if (uMode < 0.5) {
@@ -253,17 +264,19 @@ void main() {
     col = mix(col, uInk, aC);
   }
 
-  /* chromatic aberration blooms at the creases as the sheet folds */
-  if (t > 0.003) {
-    float ca = t * (0.35 + band);
-    float aR = texture2D(uType, uv + vec2(0.02 * ca, 0.0)).a;
-    float aB = texture2D(uType, uv - vec2(0.02 * ca, 0.0)).a;
-    col = mix(col, vec3(1.0, 0.18, 0.24), aR * ca * 0.55);
-    col = mix(col, vec3(0.0, 0.75, 1.0), aB * ca * 0.55);
-    col *= 1.0 - band * 0.3;
+  /* at the fold: curvature shadow, crease light, chromatic fringe
+     along the direction of travel — the portfolio's fold language */
+  if (foldZ > 0.001) {
+    float ca = foldZ * foldZ;
+    float aR = texture2D(uType, uv + vec2(0.0, 0.02 * ca)).a;
+    float aB = texture2D(uType, uv - vec2(0.0, 0.02 * ca)).a;
+    col = mix(col, vec3(1.0, 0.18, 0.24), aR * ca * 0.6);
+    col = mix(col, vec3(0.0, 0.75, 1.0), aB * ca * 0.6);
+    col *= 1.0 - foldZ * 0.45;
+    col += pow(foldZ, 6.0) * 0.4;   /* the crease catching light */
   }
 
-  gl_FragColor = vec4(col * inBand, inBand); /* premultiplied */
+  gl_FragColor = vec4(col, 1.0);
 }
 `;
 
@@ -309,7 +322,7 @@ export function createPress(glCanvas) {
   gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, buildAtlas());
 
   const U = {};
-  ["uType", "uAtlas", "uPaper", "uInk", "uInk2", "uMode", "uTime", "uP", "uKick"].forEach((n) => {
+  ["uType", "uAtlas", "uPaper", "uInk", "uInk2", "uMode", "uTime", "uP", "uLines"].forEach((n) => {
     U[n] = gl.getUniformLocation(prog, n);
   });
   gl.uniform1i(U.uType, 0);
@@ -321,14 +334,14 @@ export function createPress(glCanvas) {
       gl.bindTexture(gl.TEXTURE_2D, typeTex);
       gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, typeCanvas);
     },
-    render({ inks, mode, p, time, kick = 0 }) {
+    render({ inks, mode, p, time, lines = [1, 0] }) {
       gl.viewport(0, 0, glCanvas.width, glCanvas.height);
       gl.uniform3fv(U.uPaper, hexToVec(inks.paper));
       gl.uniform3fv(U.uInk, hexToVec(inks.ink));
       gl.uniform3fv(U.uInk2, hexToVec(inks.ink2));
       gl.uniform1f(U.uMode, Math.max(0, MATERIALS.findIndex((m) => m.id === mode)));
       gl.uniform1f(U.uTime, time);
-      gl.uniform1f(U.uKick, kick);
+      gl.uniform2f(U.uLines, lines[0], lines[1]);
       gl.uniform2f(U.uP, p.x, 1 - p.y);
       gl.drawArrays(gl.TRIANGLES, 0, 3);
     },
@@ -349,7 +362,7 @@ export function exportPoster(state) {
   const press = createPress(glCanvas);
   if (!press) return;
   press.setType(typeCanvas);
-  press.render({ ...state, time: state.time ?? 2.0, kick: 0 });
+  press.render({ ...state, time: state.time ?? 2.0, lines: [1, 0] }); /* no fold in the print */
 
   glCanvas.toBlob((blob) => {
     const a = document.createElement("a");

@@ -60,9 +60,10 @@ export default function App() {
     pressRef.current?.setType(typeCanvasRef.current);
   }, [text, layout, no, fontsReady]);
 
-  /* press + render loop — the eject folds the sheet like fabric
-     (uKick eases toward its target so the fold blooms, not snaps) */
-  const kickRef = useRef(0);
+  /* press + render loop — every frame we measure where the viewport
+     edges cross the canvas and hand those lines to the shader, so the
+     fold lives at the SCREEN edge while the sheet travels through it
+     (the portfolio fold, exactly). Inactive lines: top=1, bottom=0. */
   useEffect(() => {
     if (!fontsReady) return;
     pressRef.current = createPress(glCanvasRef.current);
@@ -70,13 +71,18 @@ export default function App() {
     const t0 = performance.now();
     const loop = (t) => {
       const s = stateRef.current;
-      const target = s.phase === "foldout" ? 1 : s.phase === "squash" ? 0.1 : 0;
-      const rate = s.phase === "foldin" ? 0.09 : 0.14; // unfold is gentler
-      kickRef.current += (target - kickRef.current) * rate;
-      if (kickRef.current < 0.001) kickRef.current = 0;
+      let lines = [1, 0];
+      if (s.phase === "floatout" || s.phase === "floatin" || s.phase === "reset") {
+        const rect = glCanvasRef.current.getBoundingClientRect();
+        if (rect.height > 0) {
+          const vT = 1 + rect.top / rect.height;                      // viewport top in v-space
+          const vB = 1 - (window.innerHeight - rect.top) / rect.height; // viewport bottom
+          lines = [Math.min(1, Math.max(0, vT)), Math.min(1, Math.max(0, vB))];
+        }
+      }
       pressRef.current?.render({
         inks: s.inks, mode: s.mode, p: s.p,
-        time: (t - t0) / 1000, kick: kickRef.current,
+        time: (t - t0) / 1000, lines,
       });
       rafRef.current = requestAnimationFrame(loop);
     };
@@ -92,8 +98,9 @@ export default function App() {
     };
   }, []);
 
-  /* ── PRESS: bite → the sheet folds out (in-shader, chromatic
-     creases) + download → next sheet unfolds back in ── */
+  /* ── PRESS: bite → the sheet floats up out of the screen, folding
+     with chromatic creases as it goes + download → the next sheet
+     floats in from below, unfolding as it rises ── */
   const press = async () => {
     if (phase !== "idle") return;
     const pNow = hover ?? pos;
@@ -106,19 +113,35 @@ export default function App() {
       if (j.n != null) n = j.n;
     } catch { /* local number is fine */ }
 
-    setTimeout(() => setPhase("foldout"), 90);
+    setTimeout(() => setPhase("floatout"), 90);
     setTimeout(() => {
       exportPoster({ text, layout, seed: n, inks, mode, p: pNow, time: 2.0 });
-    }, 90 + EJECT_MS * 0.8);
+    }, 90 + 450);
     setTimeout(() => {
-      setNo(n + 1); // redraws the type while the sheet is folded away
-      setPhase("foldin");
-    }, 90 + EJECT_MS + 160);
-    setTimeout(() => setPhase("idle"), 90 + EJECT_MS + 160 + 600);
+      setNo(n + 1); // redraw the type while the sheet is offscreen
+      setPhase("reset");
+      requestAnimationFrame(() => requestAnimationFrame(() => setPhase("floatin")));
+    }, 90 + 880);
+    setTimeout(() => setPhase("idle"), 90 + 880 + 950);
   };
 
-  const sheetTransform = phase === "squash" ? "scale(0.985)" : "scale(1)";
-  const shadowOn = phase === "idle" || phase === "squash";
+  /* pure vertical slide — the fold at the viewport edge does the
+     drama, exactly like the portfolio's fold transitions */
+  const sheetTransform = {
+    idle: "translateY(0)",
+    squash: "scale(0.985)",
+    floatout: "translateY(-170%)",
+    reset: "translateY(150%)",
+    floatin: "translateY(0)",
+  }[phase];
+  const sheetTransition = {
+    idle: "transform 0.5s cubic-bezier(0.22, 1, 0.36, 1)",
+    squash: "transform 0.09s ease",
+    floatout: "transform 0.9s cubic-bezier(0.6, 0.05, 0.75, 0.4)",
+    reset: "none",
+    floatin: "transform 0.95s cubic-bezier(0.22, 1, 0.36, 1)",
+  }[phase];
+  const shadowOn = phase === "idle" || phase === "squash" || phase === "floatin";
 
   return (
     <div style={{ minHeight: "100vh", display: "flex", flexDirection: "column" }}>
@@ -269,12 +292,14 @@ export default function App() {
             }}
             style={{
               position: "relative",
+              zIndex: 20, /* the sheet floats over the chrome on its way out */
               cursor: locked ? "default" : "crosshair",
               touchAction: "none",
               lineHeight: 0,
               borderRadius: 2,
               transform: sheetTransform,
-              transition: "transform 0.12s ease",
+              transition: sheetTransition,
+              willChange: "transform",
             }}
           >
             {/* shadow underlay — fades while the sheet is folded away */}
