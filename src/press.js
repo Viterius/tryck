@@ -21,7 +21,7 @@ export const INKS = [
 /* order matters — index = uMode in the shader */
 export const MATERIALS = [
   { id: "fold", label: "Fold" },
-  { id: "chrome", label: "Chrome" },
+  { id: "bauhaus", label: "Bauhaus" },
   { id: "split", label: "Split" },
   { id: "melt", label: "Melt" },
   { id: "ascii", label: "Ascii" },
@@ -125,6 +125,19 @@ uniform vec2 uP;
 
 float hash(vec2 p) { return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
 
+/* one Bauhaus primitive in cell space (q: 0..1), oriented by o */
+float shapeMask(vec2 q, float pick, float o) {
+  if (o > 0.75)      q = vec2(q.y, 1.0 - q.x);
+  else if (o > 0.5)  q = 1.0 - q;
+  else if (o > 0.25) q = vec2(1.0 - q.y, q.x);
+  if (pick < 0.30) return 1.0;                                        /* square */
+  if (pick < 0.50) return step(length(q - 0.5), 0.5);                 /* circle */
+  if (pick < 0.68) return step(length(q - vec2(0.5, 0.0)), 0.5);      /* semicircle */
+  if (pick < 0.82) return step(length(q), 1.0);                       /* quarter disc */
+  if (pick < 0.94) return step(q.x, q.y);                             /* triangle */
+  return step(abs(length(q - 0.5) - 0.34), 0.10);                     /* ring */
+}
+
 void main() {
   vec2 uv = vUv;
   vec3 col;
@@ -152,23 +165,29 @@ void main() {
     col *= 1.0 - depth * 0.42 * band;
     col += depth * 0.06 * (1.0 - band);
   } else if (uMode < 1.5) {
-    /* CHROME — liquid-metal type: bevel light + two-ink sweep */
-    float ang = uP.x * 6.28318;
-    vec2 L = vec2(cos(ang), sin(ang));
-    float e = 0.0035;
-    float a  = texture2D(uType, uv).a;
-    float ax = texture2D(uType, uv + vec2(e, 0.0)).a - texture2D(uType, uv - vec2(e, 0.0)).a;
-    float ay = texture2D(uType, uv + vec2(0.0, e)).a - texture2D(uType, uv - vec2(0.0, e)).a;
-    vec2 n = vec2(ax, ay);
-    float edge = clamp(length(n) * 2.4, 0.0, 1.0);
-    float ndl = clamp(dot(normalize(n + vec2(0.0001)), L) * 0.5 + 0.5, 0.0, 1.0);
-    float sweep = dot(uv - 0.5, L) * (1.2 + uP.y * 2.2) + sin(uTime * 0.5) * 0.18;
-    vec3 fill = mix(uInk, uInk2, smoothstep(-0.7, 0.7, sweep));
-    /* inner sheen bands make the flat area read as curved metal */
-    float sheen = 0.5 + 0.5 * sin(sweep * 9.0 + uTime * 0.8);
-    vec3 metal = fill * (0.5 + 0.55 * ndl + 0.25 * sheen);
-    metal += vec3(1.0) * pow(ndl, 7.0) * edge * (0.8 + uP.y * 0.8);
-    col = mix(uPaper + (hash(uv * 800.0) - 0.5) * 0.02, metal, a);
+    /* BAUHAUS — the type rebuilt from geometric primitives.
+       x: grid scale · y: playfulness (solid type → pure geometry) */
+    float grid = mix(13.0, 36.0, uP.x);
+    vec2 cells = vec2(grid, grid * 1.4142);
+    vec2 cellId = floor(uv * cells);
+    vec2 cellUv = fract(uv * cells);
+    vec2 center = (cellId + 0.5) / cells;
+    float a = texture2D(uType, center).a;
+    float on = step(0.35, a);
+    float play = uP.y;
+    /* shape variety opens up with playfulness; squares keep it readable */
+    float pick = hash(cellId) * mix(0.28, 0.9, play);
+    float orient = hash(cellId + 4.7);
+    float m = shapeMask(cellUv, pick, orient);
+    /* palette: ink leads, second ink seconds, near-black punctuates */
+    float cr = hash(cellId + 9.3);
+    vec3 shapeCol = cr < 0.52 ? uInk : (cr < 0.82 ? uInk2 : vec3(0.10, 0.09, 0.085));
+    vec3 paper = uPaper + (hash(uv * 750.0) - 0.5) * 0.02;
+    col = mix(paper, shapeCol, m * on);
+    /* sparse accents wandering the empty paper */
+    float stray = step(1.0 - play * 0.055, hash(cellId + 2.2));
+    float ms = shapeMask(cellUv, 0.3 + hash(cellId + 6.1) * 0.7, hash(cellId + 8.8));
+    col = mix(col, cr < 0.5 ? uInk2 : vec3(0.10, 0.09, 0.085), ms * stray * (1.0 - on));
   } else if (uMode < 2.5) {
     /* SPLIT — two inks, off register; overlap overprints darker */
     vec2 off = (uP - 0.5) * 0.045;
