@@ -1,11 +1,15 @@
 /**
  * ─── press.js ─────────────────────────────────────────────────────
  * The whole press: type layer (2D canvas → alpha mask), WebGL1
- * material renderer (fold / riso grain / two-ink split), and the
- * print-res PNG export. No libraries — one quad, one shader.
+ * material renderer, and the print-res PNG export. No libraries —
+ * one quad, one shader, one glyph atlas for the ASCII material.
+ *
+ * uKick is the press moment: a fold-curtain deformation that rides
+ * on top of ANY material while the sheet ejects — the same fabric
+ * language as viterius.com, making a cameo.
  */
 
-/* ── Riso ink pairs — paper, ink, second ink for the split ──────── */
+/* ── Riso ink pairs — paper, ink, second ink ────────────────────── */
 export const INKS = [
   { id: "blue", paper: "#f2efe4", ink: "#0078bf", ink2: "#ff48b0" },
   { id: "pink", paper: "#f6f0e8", ink: "#ff48b0", ink2: "#0078bf" },
@@ -14,12 +18,13 @@ export const INKS = [
   { id: "black", paper: "#efece3", ink: "#17150f", ink2: "#f15060" },
 ];
 
+/* order matters — index = uMode in the shader */
 export const MATERIALS = [
   { id: "fold", label: "Fold" },
-  { id: "grain", label: "Grain" },
+  { id: "chrome", label: "Chrome" },
   { id: "split", label: "Split" },
   { id: "melt", label: "Melt" },
-  { id: "deboss", label: "Deboss" },
+  { id: "ascii", label: "Ascii" },
   { id: "scan", label: "Scan" },
 ];
 
@@ -44,9 +49,8 @@ export function drawType(canvas, { text, layout, seed }) {
   const words = (text.trim() || "TRYCK").toUpperCase().split(/\s+/).slice(0, 12);
 
   if (layout === "stack") {
-    // each word fills the column; scale the stack to fit the page
     const contentW = W - mx * 2;
-    const contentH = H - mx * 2 - H * 0.05; // reserve colophon strip
+    const contentH = H - mx * 2 - H * 0.05;
     ctx.font = `100px "Anton", sans-serif`;
     const sizes = words.map((w) => Math.min((100 * contentW) / Math.max(ctx.measureText(w).width, 1), H * 0.34));
     const total = sizes.reduce((a, s) => a + s * 1.03, 0);
@@ -56,13 +60,11 @@ export function drawType(canvas, { text, layout, seed }) {
     words.forEach((w, i) => {
       const s = sizes[i] * k;
       ctx.font = `${s}px "Anton", sans-serif`;
-      // center words narrower than the column
       const ww = ctx.measureText(w).width;
       ctx.fillText(w, mx + (contentW - ww) / 2, y);
       y += s * 1.03;
     });
   } else {
-    // tilt: the text as repeating rows on a slight diagonal
     const line = words.join(" ") + "  ·  ";
     const s = W * 0.15;
     ctx.font = `${s}px "Anton", sans-serif`;
@@ -79,17 +81,33 @@ export function drawType(canvas, { text, layout, seed }) {
       for (let x = shift; x < diag / 2 + lw; x += lw) ctx.fillText(line, x - diag / 2 + lw / 2, y);
     }
     ctx.restore();
-    // keep the colophon strip clean
     ctx.clearRect(0, H - H * 0.055, W, H * 0.055);
   }
 
-  // colophon — baked into the print, tiny and proud
   ctx.font = `500 ${Math.max(W * 0.013, 11)}px "IBM Plex Mono", monospace`;
   ctx.textBaseline = "alphabetic";
   ctx.fillText(`TRYCK N°${seed} — a little poster press · viterius.com`, mx, H - mx * 0.55);
 }
 
-/* ── WebGL material renderer ────────────────────────────────────── */
+/* ── ASCII glyph atlas: 10 characters, light → dark ─────────────── */
+const CHARSET = " .:-=+*x#@";
+function buildAtlas() {
+  const cell = 64;
+  const c = document.createElement("canvas");
+  c.width = cell * CHARSET.length;
+  c.height = cell;
+  const ctx = c.getContext("2d");
+  ctx.fillStyle = "#fff";
+  ctx.font = `500 ${cell * 0.82}px "IBM Plex Mono", monospace`;
+  ctx.textAlign = "center";
+  ctx.textBaseline = "middle";
+  for (let i = 0; i < CHARSET.length; i++) {
+    ctx.fillText(CHARSET[i], i * cell + cell / 2, cell * 0.54);
+  }
+  return c;
+}
+
+/* ── Shaders ────────────────────────────────────────────────────── */
 const VERT = `
 attribute vec2 aPos;
 varying vec2 vUv;
@@ -100,8 +118,9 @@ const FRAG = `
 precision highp float;
 varying vec2 vUv;
 uniform sampler2D uType;
+uniform sampler2D uAtlas;
 uniform vec3 uPaper, uInk, uInk2;
-uniform float uMode, uTime;
+uniform float uMode, uTime, uKick;
 uniform vec2 uP;
 
 float hash(vec2 p) { return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
@@ -109,6 +128,15 @@ float hash(vec2 p) { return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453);
 void main() {
   vec2 uv = vUv;
   vec3 col;
+
+  /* the press moment: fold curtains ride on top of any material */
+  float kb = 0.0;
+  if (uKick > 0.001) {
+    float kph = uv.x * 22.0 + uTime * 7.0;
+    uv.x += sin(kph) * 0.05 * uKick;
+    uv.y += cos(kph * 0.6) * 0.022 * uKick;
+    kb = (0.5 - 0.5 * cos(kph)) * uKick;
+  }
 
   if (uMode < 0.5) {
     /* FOLD — soft curtains: displacement + shading bands */
@@ -124,17 +152,23 @@ void main() {
     col *= 1.0 - depth * 0.42 * band;
     col += depth * 0.06 * (1.0 - band);
   } else if (uMode < 1.5) {
-    /* GRAIN — riso halftone + paper tooth */
-    float cell = mix(200.0, 58.0, uP.y);
-    float grain = uP.x;
-    float a = texture2D(uType, uv).a;
-    vec2 g = uv * cell;
-    g.y += mod(floor(g.x), 2.0) * 0.5;
-    float d = length(fract(g) - 0.5);
-    float dotm = smoothstep(0.025, -0.025, d - a * 0.6 - 0.02);
-    float tooth = (hash(uv * 900.0) - 0.5) * 0.045;
-    float inkVar = 1.0 - grain * 0.6 * hash(uv * 620.0 + 3.7);
-    col = mix(uPaper + tooth, mix(uPaper, uInk, inkVar), dotm);
+    /* CHROME — liquid-metal type: bevel light + two-ink sweep */
+    float ang = uP.x * 6.28318;
+    vec2 L = vec2(cos(ang), sin(ang));
+    float e = 0.0035;
+    float a  = texture2D(uType, uv).a;
+    float ax = texture2D(uType, uv + vec2(e, 0.0)).a - texture2D(uType, uv - vec2(e, 0.0)).a;
+    float ay = texture2D(uType, uv + vec2(0.0, e)).a - texture2D(uType, uv - vec2(0.0, e)).a;
+    vec2 n = vec2(ax, ay);
+    float edge = clamp(length(n) * 2.4, 0.0, 1.0);
+    float ndl = clamp(dot(normalize(n + vec2(0.0001)), L) * 0.5 + 0.5, 0.0, 1.0);
+    float sweep = dot(uv - 0.5, L) * (1.2 + uP.y * 2.2) + sin(uTime * 0.5) * 0.18;
+    vec3 fill = mix(uInk, uInk2, smoothstep(-0.7, 0.7, sweep));
+    /* inner sheen bands make the flat area read as curved metal */
+    float sheen = 0.5 + 0.5 * sin(sweep * 9.0 + uTime * 0.8);
+    vec3 metal = fill * (0.5 + 0.55 * ndl + 0.25 * sheen);
+    metal += vec3(1.0) * pow(ndl, 7.0) * edge * (0.8 + uP.y * 0.8);
+    col = mix(uPaper + (hash(uv * 800.0) - 0.5) * 0.02, metal, a);
   } else if (uMode < 2.5) {
     /* SPLIT — two inks, off register; overlap overprints darker */
     vec2 off = (uP - 0.5) * 0.045;
@@ -159,16 +193,21 @@ void main() {
     float tooth = (hash(uv * 700.0) - 0.5) * 0.04;
     col = mix(uPaper + tooth, uInk, a);
   } else if (uMode < 4.5) {
-    /* DEBOSS — letterpress: type pressed into the sheet */
-    float ang = uP.x * 6.28318;
-    vec2 d = vec2(cos(ang), sin(ang)) * (0.0012 + uP.y * 0.0042);
-    float a  = texture2D(uType, uv).a;
-    float aH = texture2D(uType, uv + d).a;
-    float aS = texture2D(uType, uv - d).a;
-    float tooth = (hash(uv * 820.0) - 0.5) * 0.035;
-    col = mix(uPaper + tooth, uInk * 0.93, a * 0.97);
-    col += clamp(aH - a, 0.0, 1.0) * 0.20;  /* lit rim */
-    col -= clamp(aS - a, 0.0, 1.0) * 0.28;  /* pressed shadow */
+    /* ASCII — the poster re-typeset in terminal characters */
+    float grid = mix(38.0, 105.0, uP.x);
+    vec2 cells = vec2(grid, grid / 1.4142);
+    vec2 cellId = floor(uv * cells);
+    vec2 cellUv = fract(uv * cells);
+    vec2 center = (cellId + 0.5) / cells;
+    float a = texture2D(uType, center).a;
+    float idx = floor(clamp(a, 0.0, 0.999) * 10.0);
+    float ga = texture2D(uAtlas, vec2((idx + cellUv.x) / 10.0, cellUv.y)).a;
+    float on = step(0.04, a);
+    col = mix(uPaper + (hash(uv * 700.0) - 0.5) * 0.025, uInk, ga * on);
+    /* background static — faint characters in the empty paper */
+    float bgIdx = 1.0 + floor(hash(cellId) * 2.0);
+    float gbg = texture2D(uAtlas, vec2((bgIdx + cellUv.x) / 10.0, cellUv.y)).a;
+    col = mix(col, mix(uInk, uInk2, hash(cellId + 9.0)), gbg * (1.0 - on) * uP.y * 0.35);
   } else {
     /* SCAN — sliced misprint with channel drift */
     float rows = mix(10.0, 90.0, uP.x);
@@ -185,6 +224,7 @@ void main() {
     col = mix(col, uInk, aC);
   }
 
+  col *= 1.0 - kb * 0.5;
   gl_FragColor = vec4(col, 1.0);
 }
 `;
@@ -213,33 +253,45 @@ export function createPress(glCanvas) {
   gl.enableVertexAttribArray(aPos);
   gl.vertexAttribPointer(aPos, 2, gl.FLOAT, false, 0, 0);
 
-  const tex = gl.createTexture();
-  gl.bindTexture(gl.TEXTURE_2D, tex);
   gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, true);
-  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
-  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
-  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
-  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+
+  const makeTex = (unit) => {
+    gl.activeTexture(gl.TEXTURE0 + unit);
+    const t = gl.createTexture();
+    gl.bindTexture(gl.TEXTURE_2D, t);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+    return t;
+  };
+
+  const typeTex = makeTex(0);
+  makeTex(1);
+  gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, buildAtlas());
 
   const U = {};
-  ["uType", "uPaper", "uInk", "uInk2", "uMode", "uTime", "uP"].forEach((n) => {
+  ["uType", "uAtlas", "uPaper", "uInk", "uInk2", "uMode", "uTime", "uP", "uKick"].forEach((n) => {
     U[n] = gl.getUniformLocation(prog, n);
   });
   gl.uniform1i(U.uType, 0);
+  gl.uniform1i(U.uAtlas, 1);
 
   return {
     setType(typeCanvas) {
-      gl.bindTexture(gl.TEXTURE_2D, tex);
+      gl.activeTexture(gl.TEXTURE0);
+      gl.bindTexture(gl.TEXTURE_2D, typeTex);
       gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, typeCanvas);
     },
-    render({ inks, mode, p, time }) {
+    render({ inks, mode, p, time, kick = 0 }) {
       gl.viewport(0, 0, glCanvas.width, glCanvas.height);
       gl.uniform3fv(U.uPaper, hexToVec(inks.paper));
       gl.uniform3fv(U.uInk, hexToVec(inks.ink));
       gl.uniform3fv(U.uInk2, hexToVec(inks.ink2));
       gl.uniform1f(U.uMode, Math.max(0, MATERIALS.findIndex((m) => m.id === mode)));
       gl.uniform1f(U.uTime, time);
-      gl.uniform2f(U.uP, p.x, 1 - p.y); // y up in shader space
+      gl.uniform1f(U.uKick, kick);
+      gl.uniform2f(U.uP, p.x, 1 - p.y);
       gl.drawArrays(gl.TRIANGLES, 0, 3);
     },
   };
@@ -247,7 +299,7 @@ export function createPress(glCanvas) {
 
 /* ── Export: re-render at print resolution, download PNG ───────── */
 export function exportPoster(state) {
-  const W = 2000, H = Math.round(2000 * Math.SQRT2); // A-series ratio
+  const W = 2000, H = Math.round(2000 * Math.SQRT2);
   const typeCanvas = document.createElement("canvas");
   typeCanvas.width = W;
   typeCanvas.height = H;
@@ -259,7 +311,7 @@ export function exportPoster(state) {
   const press = createPress(glCanvas);
   if (!press) return;
   press.setType(typeCanvas);
-  press.render({ ...state, time: state.time ?? 2.0 });
+  press.render({ ...state, time: state.time ?? 2.0, kick: 0 });
 
   glCanvas.toBlob((blob) => {
     const a = document.createElement("a");

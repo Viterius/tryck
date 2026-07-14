@@ -60,7 +60,9 @@ export default function App() {
     pressRef.current?.setType(typeCanvasRef.current);
   }, [text, layout, no, fontsReady]);
 
-  /* press + render loop (the eject surge deepens the material) */
+  /* press + render loop — the eject folds the sheet like fabric
+     (uKick eases toward its target so the fold blooms, not snaps) */
+  const kickRef = useRef(0);
   useEffect(() => {
     if (!fontsReady) return;
     pressRef.current = createPress(glCanvasRef.current);
@@ -68,11 +70,13 @@ export default function App() {
     const t0 = performance.now();
     const loop = (t) => {
       const s = stateRef.current;
-      const surge = s.phase === "eject" ? 0.55 : s.phase === "squash" ? 0.15 : 0;
-      const pEff = surge
-        ? { x: s.p.x, y: Math.min(1, s.p.y + surge) }
-        : s.p;
-      pressRef.current?.render({ inks: s.inks, mode: s.mode, p: pEff, time: (t - t0) / 1000 });
+      const target = s.phase === "eject" ? 1 : s.phase === "squash" ? 0.25 : 0;
+      kickRef.current += (target - kickRef.current) * 0.16;
+      if (kickRef.current < 0.001) kickRef.current = 0;
+      pressRef.current?.render({
+        inks: s.inks, mode: s.mode, p: s.p,
+        time: (t - t0) / 1000, kick: kickRef.current,
+      });
       rafRef.current = requestAnimationFrame(loop);
     };
     rafRef.current = requestAnimationFrame(loop);
@@ -106,6 +110,7 @@ export default function App() {
     }, EJECT_MS * 0.7);
     setTimeout(() => {
       setNo(n + 1);
+      kickRef.current = 0; // fresh sheet arrives flat
       setPhase("reload");
       requestAnimationFrame(() => requestAnimationFrame(() => setPhase("idle")));
     }, 90 + EJECT_MS);
@@ -113,9 +118,9 @@ export default function App() {
 
   const sheetTransform = {
     idle: "translateY(0) rotate(0deg)",
-    squash: "translateY(5px) scale(0.985)",
-    eject: "translateY(120%) rotate(-2.5deg)",
-    reload: "translateY(-112%)",
+    squash: "translateY(6px) scale(0.982)",
+    eject: "translateY(140%) rotate(-3deg) scaleY(0.9)",
+    reload: "translateY(-140%)",
   }[phase];
   const sheetTransition = {
     idle: "transform 0.5s cubic-bezier(0.22, 1, 0.36, 1)",
@@ -237,70 +242,76 @@ export default function App() {
           </div>
         </div>
 
-        {/* The press bed + sheet */}
+        {/* The sheet — the WHOLE card ejects, shadow and all. The frame
+            clips it once it's past the edge (padding holds the shadow). */}
         <div
-          role="application"
-          aria-label="Poster preview. Gliding adjusts the material, clicking pins it, clicking again resumes. Arrow keys nudge; hold shift for bigger steps."
-          tabIndex={0}
-          onPointerMove={(e) => { if (!locked) setHover(fromEvent(e)); }}
-          onPointerDown={(e) => {
-            if (locked) { setLocked(false); setHover(fromEvent(e)); }
-            else { setPos(fromEvent(e)); setLocked(true); setHover(null); }
-          }}
-          onPointerLeave={() => { if (!locked) setHover(null); }}
-          onKeyDown={(e) => {
-            const step = e.shiftKey ? 0.1 : 0.02;
-            const mv = {
-              ArrowLeft: [-step, 0], ArrowRight: [step, 0],
-              ArrowUp: [0, -step], ArrowDown: [0, step],
-            }[e.key];
-            if (!mv) return;
-            e.preventDefault();
-            setLocked(true);
-            setHover(null);
-            setPos((q) => ({
-              x: Math.min(1, Math.max(0, q.x + mv[0])),
-              y: Math.min(1, Math.max(0, q.y + mv[1])),
-            }));
-          }}
           style={{
             justifySelf: "center",
-            position: "relative",
             width: "min(100%, calc((88vh - 120px) / 1.4142))",
-            cursor: locked ? "default" : "crosshair",
-            touchAction: "none",
-            lineHeight: 0,
-            background: "#dfdbce", /* the press bed, visible mid-eject */
-            boxShadow: "0 30px 80px rgba(22,21,19,0.28), 0 4px 14px rgba(22,21,19,0.18)",
-            borderRadius: 2,
             overflow: "hidden",
+            padding: 90,
+            margin: -90,
+            boxSizing: "content-box",
           }}
         >
-          <canvas
-            ref={glCanvasRef}
-            width={PREVIEW_W}
-            height={PREVIEW_H}
+          <div
+            role="application"
+            aria-label="Poster preview. Gliding adjusts the material, clicking pins it, clicking again resumes. Arrow keys nudge; hold shift for bigger steps."
+            tabIndex={0}
+            onPointerMove={(e) => { if (!locked) setHover(fromEvent(e)); }}
+            onPointerDown={(e) => {
+              if (locked) { setLocked(false); setHover(fromEvent(e)); }
+              else { setPos(fromEvent(e)); setLocked(true); setHover(null); }
+            }}
+            onPointerLeave={() => { if (!locked) setHover(null); }}
+            onKeyDown={(e) => {
+              const step = e.shiftKey ? 0.1 : 0.02;
+              const mv = {
+                ArrowLeft: [-step, 0], ArrowRight: [step, 0],
+                ArrowUp: [0, -step], ArrowDown: [0, step],
+              }[e.key];
+              if (!mv) return;
+              e.preventDefault();
+              setLocked(true);
+              setHover(null);
+              setPos((q) => ({
+                x: Math.min(1, Math.max(0, q.x + mv[0])),
+                y: Math.min(1, Math.max(0, q.y + mv[1])),
+              }));
+            }}
             style={{
-              width: "100%", height: "auto", display: "block",
+              position: "relative",
+              cursor: locked ? "default" : "crosshair",
+              touchAction: "none",
+              lineHeight: 0,
+              boxShadow: "0 30px 80px rgba(22,21,19,0.28), 0 4px 14px rgba(22,21,19,0.18)",
+              borderRadius: 2,
               transform: sheetTransform,
               transition: sheetTransition,
               willChange: "transform",
             }}
-          />
-          {locked && (
-            <span
-              aria-hidden="true"
-              style={{
-                position: "absolute", top: 10, right: 10,
-                fontFamily: "var(--mono)", fontSize: 9, letterSpacing: "0.16em",
-                textTransform: "uppercase", lineHeight: 1,
-                background: "var(--ink)", color: "var(--paper)",
-                padding: "5px 8px 4px", borderRadius: 2, opacity: 0.85,
-              }}
-            >
-              pinned
-            </span>
-          )}
+          >
+            <canvas
+              ref={glCanvasRef}
+              width={PREVIEW_W}
+              height={PREVIEW_H}
+              style={{ width: "100%", height: "auto", display: "block", borderRadius: 2 }}
+            />
+            {locked && (
+              <span
+                aria-hidden="true"
+                style={{
+                  position: "absolute", top: 10, right: 10,
+                  fontFamily: "var(--mono)", fontSize: 9, letterSpacing: "0.16em",
+                  textTransform: "uppercase", lineHeight: 1,
+                  background: "var(--ink)", color: "var(--paper)",
+                  padding: "5px 8px 4px", borderRadius: 2, opacity: 0.85,
+                }}
+              >
+                pinned
+              </span>
+            )}
+          </div>
         </div>
       </main>
 
