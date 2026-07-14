@@ -18,6 +18,9 @@ export const MATERIALS = [
   { id: "fold", label: "Fold" },
   { id: "grain", label: "Grain" },
   { id: "split", label: "Split" },
+  { id: "melt", label: "Melt" },
+  { id: "deboss", label: "Deboss" },
+  { id: "scan", label: "Scan" },
 ];
 
 export const LAYOUTS = [
@@ -132,7 +135,7 @@ void main() {
     float tooth = (hash(uv * 900.0) - 0.5) * 0.045;
     float inkVar = 1.0 - grain * 0.6 * hash(uv * 620.0 + 3.7);
     col = mix(uPaper + tooth, mix(uPaper, uInk, inkVar), dotm);
-  } else {
+  } else if (uMode < 2.5) {
     /* SPLIT — two inks, off register; overlap overprints darker */
     vec2 off = (uP - 0.5) * 0.045;
     float a1 = texture2D(uType, uv + off).a;
@@ -141,6 +144,45 @@ void main() {
     col = mix(col, uInk, a1);
     col = mix(col, mix(uInk2, uInk * uInk2 * 1.7, a1), a2 * 0.92);
     col += (hash(uv * 800.0) - 0.5) * 0.03;
+  } else if (uMode < 3.5) {
+    /* MELT — the ink hasn't dried; it drips down the sheet */
+    float cols = mix(24.0, 130.0, uP.x);
+    float amt = uP.y * 0.35;
+    float cid = floor(uv.x * cols);
+    float drip = pow(hash(vec2(cid, 7.0)), 1.6);
+    float a = 0.0;
+    for (int i = 0; i < 7; i++) {
+      float k = float(i) / 6.0;
+      float aa = texture2D(uType, vec2(uv.x, uv.y + k * amt * drip)).a;
+      a = max(a, aa * (1.0 - k * 0.5));
+    }
+    float tooth = (hash(uv * 700.0) - 0.5) * 0.04;
+    col = mix(uPaper + tooth, uInk, a);
+  } else if (uMode < 4.5) {
+    /* DEBOSS — letterpress: type pressed into the sheet */
+    float ang = uP.x * 6.28318;
+    vec2 d = vec2(cos(ang), sin(ang)) * (0.0012 + uP.y * 0.0042);
+    float a  = texture2D(uType, uv).a;
+    float aH = texture2D(uType, uv + d).a;
+    float aS = texture2D(uType, uv - d).a;
+    float tooth = (hash(uv * 820.0) - 0.5) * 0.035;
+    col = mix(uPaper + tooth, uInk * 0.93, a * 0.97);
+    col += clamp(aH - a, 0.0, 1.0) * 0.20;  /* lit rim */
+    col -= clamp(aS - a, 0.0, 1.0) * 0.28;  /* pressed shadow */
+  } else {
+    /* SCAN — sliced misprint with channel drift */
+    float rows = mix(10.0, 90.0, uP.x);
+    float amt = uP.y;
+    float row = floor(uv.y * rows);
+    float jolt = (hash(vec2(row, 3.0)) - 0.5) * amt * 0.22;
+    vec2 u2 = vec2(uv.x + jolt, uv.y);
+    float aC = texture2D(uType, u2).a;
+    float a1 = texture2D(uType, u2 + vec2(amt * 0.014, 0.0)).a;
+    float a2 = texture2D(uType, u2 - vec2(amt * 0.014, 0.0)).a;
+    col = uPaper + (hash(uv * 640.0) - 0.5) * 0.03;
+    col = mix(col, uInk2, clamp(a1 - aC, 0.0, 1.0));
+    col = mix(col, uInk2 * 0.8, clamp(a2 - aC, 0.0, 1.0) * 0.7);
+    col = mix(col, uInk, aC);
   }
 
   gl_FragColor = vec4(col, 1.0);
@@ -195,7 +237,7 @@ export function createPress(glCanvas) {
       gl.uniform3fv(U.uPaper, hexToVec(inks.paper));
       gl.uniform3fv(U.uInk, hexToVec(inks.ink));
       gl.uniform3fv(U.uInk2, hexToVec(inks.ink2));
-      gl.uniform1f(U.uMode, mode === "fold" ? 0 : mode === "grain" ? 1 : 2);
+      gl.uniform1f(U.uMode, Math.max(0, MATERIALS.findIndex((m) => m.id === mode)));
       gl.uniform1f(U.uTime, time);
       gl.uniform2f(U.uP, p.x, 1 - p.y); // y up in shader space
       gl.drawArrays(gl.TRIANGLES, 0, 3);
