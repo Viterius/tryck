@@ -70,8 +70,9 @@ export default function App() {
     const t0 = performance.now();
     const loop = (t) => {
       const s = stateRef.current;
-      const target = s.phase === "eject" ? 1 : s.phase === "squash" ? 0.25 : 0;
-      kickRef.current += (target - kickRef.current) * 0.16;
+      const target = s.phase === "foldout" ? 1 : s.phase === "squash" ? 0.1 : 0;
+      const rate = s.phase === "foldin" ? 0.09 : 0.14; // unfold is gentler
+      kickRef.current += (target - kickRef.current) * rate;
       if (kickRef.current < 0.001) kickRef.current = 0;
       pressRef.current?.render({
         inks: s.inks, mode: s.mode, p: s.p,
@@ -91,7 +92,8 @@ export default function App() {
     };
   }, []);
 
-  /* ── PRESS: bite → eject + download → fresh sheet feeds in ── */
+  /* ── PRESS: bite → the sheet folds out (in-shader, chromatic
+     creases) + download → next sheet unfolds back in ── */
   const press = async () => {
     if (phase !== "idle") return;
     const pNow = hover ?? pos;
@@ -104,30 +106,19 @@ export default function App() {
       if (j.n != null) n = j.n;
     } catch { /* local number is fine */ }
 
-    setTimeout(() => setPhase("eject"), 90);
+    setTimeout(() => setPhase("foldout"), 90);
     setTimeout(() => {
       exportPoster({ text, layout, seed: n, inks, mode, p: pNow, time: 2.0 });
-    }, EJECT_MS * 0.7);
+    }, 90 + EJECT_MS * 0.8);
     setTimeout(() => {
-      setNo(n + 1);
-      kickRef.current = 0; // fresh sheet arrives flat
-      setPhase("reload");
-      requestAnimationFrame(() => requestAnimationFrame(() => setPhase("idle")));
-    }, 90 + EJECT_MS);
+      setNo(n + 1); // redraws the type while the sheet is folded away
+      setPhase("foldin");
+    }, 90 + EJECT_MS + 160);
+    setTimeout(() => setPhase("idle"), 90 + EJECT_MS + 160 + 600);
   };
 
-  const sheetTransform = {
-    idle: "translateY(0) rotate(0deg)",
-    squash: "translateY(6px) scale(0.982)",
-    eject: "translateY(140%) rotate(-3deg) scaleY(0.9)",
-    reload: "translateY(-140%)",
-  }[phase];
-  const sheetTransition = {
-    idle: "transform 0.5s cubic-bezier(0.22, 1, 0.36, 1)",
-    squash: "transform 0.09s ease",
-    eject: `transform ${EJECT_MS}ms cubic-bezier(0.5, 0, 0.85, 0.4)`,
-    reload: "none",
-  }[phase];
+  const sheetTransform = phase === "squash" ? "scale(0.985)" : "scale(1)";
+  const shadowOn = phase === "idle" || phase === "squash";
 
   return (
     <div style={{ minHeight: "100vh", display: "flex", flexDirection: "column" }}>
@@ -242,16 +233,13 @@ export default function App() {
           </div>
         </div>
 
-        {/* The sheet — the WHOLE card ejects, shadow and all. The frame
-            clips it once it's past the edge (padding holds the shadow). */}
+        {/* The sheet — folds out of existence in the shader; the canvas
+            goes transparent outside the shrinking band, the shadow
+            underlay fades in sync. Nothing translates. */}
         <div
           style={{
             justifySelf: "center",
             width: "min(100%, calc((88vh - 120px) / 1.4142))",
-            overflow: "hidden",
-            padding: 90,
-            margin: -90,
-            boxSizing: "content-box",
           }}
         >
           <div
@@ -284,18 +272,28 @@ export default function App() {
               cursor: locked ? "default" : "crosshair",
               touchAction: "none",
               lineHeight: 0,
-              boxShadow: "0 30px 80px rgba(22,21,19,0.28), 0 4px 14px rgba(22,21,19,0.18)",
               borderRadius: 2,
               transform: sheetTransform,
-              transition: sheetTransition,
-              willChange: "transform",
+              transition: "transform 0.12s ease",
             }}
           >
+            {/* shadow underlay — fades while the sheet is folded away */}
+            <span
+              aria-hidden="true"
+              style={{
+                position: "absolute",
+                inset: 0,
+                borderRadius: 2,
+                boxShadow: "0 30px 80px rgba(22,21,19,0.28), 0 4px 14px rgba(22,21,19,0.18)",
+                opacity: shadowOn ? 1 : 0,
+                transition: `opacity ${shadowOn ? 0.55 : 0.4}s ease`,
+              }}
+            />
             <canvas
               ref={glCanvasRef}
               width={PREVIEW_W}
               height={PREVIEW_H}
-              style={{ width: "100%", height: "auto", display: "block", borderRadius: 2 }}
+              style={{ width: "100%", height: "auto", display: "block", borderRadius: 2, position: "relative" }}
             />
             {locked && (
               <span

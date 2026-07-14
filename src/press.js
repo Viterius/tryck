@@ -142,13 +142,23 @@ void main() {
   vec2 uv = vUv;
   vec3 col;
 
-  /* the press moment: fold curtains ride on top of any material */
-  float kb = 0.0;
-  if (uKick > 0.001) {
-    float kph = uv.x * 22.0 + uTime * 7.0;
-    uv.x += sin(kph) * 0.05 * uKick;
-    uv.y += cos(kph * 0.6) * 0.022 * uKick;
-    kb = (0.5 - 0.5 * cos(kph)) * uKick;
+  /* ── the press moment: the sheet accordion-folds out of existence.
+     uKick 0→1 squeezes the poster toward its center line in pleats;
+     alpha goes 0 outside the shrinking band so the sheet truly
+     disappears (canvas is transparent there). Reverse = unfold. ── */
+  float t = uKick;
+  float band = 0.0;
+  float inBand = 1.0;
+  if (t > 0.003) {
+    float squeeze = 1.0 - 0.92 * t;
+    float y = (vUv.y - 0.5) / max(squeeze, 0.06);
+    inBand = step(abs(y), 0.5);
+    vec2 fuv = vec2(vUv.x, y + 0.5);
+    float ph = fuv.y * 37.7;                       /* ~6 pleats */
+    band = (0.5 - 0.5 * cos(ph)) * t;
+    fuv.y += sin(ph) * 0.018 * t;
+    fuv.x += sin(fuv.y * 9.0 + ph * 0.5) * 0.02 * t;
+    uv = fuv;
   }
 
   if (uMode < 0.5) {
@@ -243,8 +253,17 @@ void main() {
     col = mix(col, uInk, aC);
   }
 
-  col *= 1.0 - kb * 0.5;
-  gl_FragColor = vec4(col, 1.0);
+  /* chromatic aberration blooms at the creases as the sheet folds */
+  if (t > 0.003) {
+    float ca = t * (0.35 + band);
+    float aR = texture2D(uType, uv + vec2(0.02 * ca, 0.0)).a;
+    float aB = texture2D(uType, uv - vec2(0.02 * ca, 0.0)).a;
+    col = mix(col, vec3(1.0, 0.18, 0.24), aR * ca * 0.55);
+    col = mix(col, vec3(0.0, 0.75, 1.0), aB * ca * 0.55);
+    col *= 1.0 - band * 0.3;
+  }
+
+  gl_FragColor = vec4(col * inBand, inBand); /* premultiplied */
 }
 `;
 
