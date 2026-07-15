@@ -55,43 +55,52 @@ export function drawType(canvas, { text, layout, seed }) {
   const words = (text.trim() || "TRYCK").toUpperCase().split(/\s+/).slice(0, 12);
 
   if (layout === "stack") {
-    /* the OH HI stack: head words uniform, left-aligned; the LAST
-       word fills the width and drags PAST the bottom edge, so its
-       stems get cropped — peeking out of the poster */
+    /* THE WALL: every word justified margin-to-margin on its own
+       line; the block fills the sheet top to bottom with a capped
+       vertical stretch. Works for one word or twelve — no overlap,
+       no dead space, pure Swiss-poster wall of type. */
     const contentW = W - mx * 2;
-    ctx.textBaseline = "top";
-    ctx.font = `100px "Anton", sans-serif`;
-    const head = words.slice(0, -1);
-    const last = words[words.length - 1];
-    let y = mx;
-    if (head.length) {
-      const s = Math.min(
-        ...head.map((w) => (100 * contentW) / Math.max(ctx.measureText(w).width, 1)),
-        H * 0.2
-      );
-      ctx.font = `${s}px "Anton", sans-serif`;
-      head.forEach((w) => {
-        ctx.fillText(w, mx, y);
-        y += s * 1.02;
-      });
-      y += s * 0.06;
-    }
-    /* last word: real cap-height metrics, anchored past the edge */
-    ctx.font = `100px "Anton", sans-serif`;
-    const ls = (100 * contentW) / Math.max(ctx.measureText(last).width, 1);
-    ctx.font = `${ls}px "Anton", sans-serif`;
-    const met = ctx.measureText(last);
-    const capH = met.actualBoundingBoxAscent || ls * 0.72;
-    const cut = (H - y) * 0.055;           /* how much peeks past the edge */
-    /* bottom-anchored always; stretch capped so glyphs stay glyphs —
-       with lots of room the word starts lower instead of distorting */
-    const stretch = Math.min(Math.max((H + cut - y) / capH, 0.55), 2.1);
-    ctx.save();
-    ctx.translate(mx, H + cut);
-    ctx.scale(1, stretch);
+    const contentH = H - mx * 1.7;
+    const cap = H * 0.85; /* safety only — a lone "I" stays a letter */
     ctx.textBaseline = "alphabetic";
-    ctx.fillText(last, 0, 0);
-    ctx.restore();
+    const fillSize = (str) => {
+      ctx.font = `100px "Anton", sans-serif`;
+      return (100 * contentW) / Math.max(ctx.measureText(str).width, 1);
+    };
+    /* merge rule: only single-character words join their neighbor —
+       a lone "I" justified to full width is a rectangle, but a giant
+       two-letter line IS the look (see: OH HI) */
+    const lines = [];
+    let cur = words[0];
+    for (let i = 1; i < words.length; i++) {
+      if (cur.replace(/\s/g, "").length < 2) cur += " " + words[i];
+      else { lines.push(cur); cur = words[i]; }
+    }
+    lines.push(cur);
+    /* per-line: size that spans the column (capped; center if capped) */
+    const fit = lines.map((w) => {
+      const s = Math.min(fillSize(w), cap);
+      ctx.font = `${s}px "Anton", sans-serif`;
+      const m = ctx.measureText(w);
+      const asc = m.actualBoundingBoxAscent || s * 0.72;
+      return { w, s, asc, x: Math.max((contentW - m.width) / 2, 0) };
+    });
+    const LEAD = 1.06;
+    const total = fit.reduce((a, f) => a + f.asc * LEAD, 0);
+    const k = Math.min(contentH / total, 1.75); /* squish beats crop */
+    const leftover = Math.max(contentH - total * k, 0);
+    const gap = fit.length > 1 ? leftover / (fit.length - 1) : 0;
+    let y = mx + (fit.length === 1 ? leftover / 2 : 0);
+    fit.forEach((f) => {
+      y += f.asc * k;
+      ctx.save();
+      ctx.translate(mx + f.x, y);
+      ctx.scale(1, k);
+      ctx.font = `${f.s}px "Anton", sans-serif`;
+      ctx.fillText(f.w, 0, 0);
+      ctx.restore();
+      y += f.asc * k * (LEAD - 1) + gap;
+    });
     ctx.textBaseline = "top";
   } else if (layout === "corner") {
     /* gallery-poster caption: modest lines, bottom-left, under the art */
