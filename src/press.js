@@ -29,9 +29,9 @@ export const INKS = [
    THE LAW (learned from Pop): the background is the instrument and
    fills the whole sheet; the type is SET — always readable. */
 export const MATERIALS = [
-  { id: "pop", label: "Pop" },
-  { id: "rays", label: "Rays" },
-  { id: "arcs", label: "Arcs" },
+  { id: "pop", label: "Moiré" },
+  { id: "rays", label: "Beams" },
+  { id: "arcs", label: "Lens" },
   { id: "split", label: "Split" },
   { id: "melt", label: "Melt" },
 ];
@@ -212,53 +212,53 @@ vec3 material(vec2 uv) {
   vec3 paper = uPaper + (hash(uv * 780.0) - 0.5) * 0.03;
 
   if (uMode < 0.5) {
-    /* POP — groovy waves. The pin PLACES the center and SHAPES it:
-       y = ring density, x = wobble amount. */
-    vec2 c = uP;
-    vec2 dv = (uv - c) * ASPECT;
-    float ang = atan(dv.y, dv.x);
-    float freq = mix(7.0, 16.0, uP.y);
-    float wob = mix(0.004, 0.032, uP.x);
-    float d = length(dv) + sin(ang * 6.0 + uTime * 0.4) * wob;
-    float band = mod(floor(d * freq), 4.0);
-    vec3 soft = mix(uInk2, uPaper, 0.55);
-    col = band < 1.0 ? uInk2 : (band < 2.0 ? paper : (band < 3.0 ? NEARBLACK : soft));
+    /* MOIRÉ — two fine ring systems interfering. The pattern is
+       emergent, not drawn. Pin = shared center; x = system offset,
+       y = ring frequency. The offset direction orbits slowly. */
+    float freq = mix(34.0, 80.0, uP.y);
+    float offAmt = mix(0.008, 0.05, uP.x);
+    vec2 c1 = uP;
+    vec2 c2 = uP + vec2(cos(uTime * 0.07), sin(uTime * 0.07)) * offAmt;
+    float d1 = distance(uv * ASPECT, c1 * ASPECT);
+    float d2 = distance(uv * ASPECT, c2 * ASPECT);
+    float r1 = step(fract(d1 * freq), 0.5);
+    float r2 = step(fract(d2 * freq), 0.5);
+    col = paper;
+    col = mix(col, uInk2, abs(r1 - r2) * 0.9);     /* interference */
+    col = mix(col, NEARBLACK, r1 * r2 * 0.82);     /* coincidence */
     col = typeOver(col, uv);
   } else if (uMode < 1.5) {
-    /* RAYS — a fan from beyond the top-right corner, no visible
-       center. x = how many rays, y = how thick they are. */
+    /* BEAMS — a hairline precision fan from beyond the corner,
+       plotter-drawn. x = beam count, y = weight; every 8th beam is
+       a black index line, like measurement marks. */
     vec2 c = vec2(1.12, 1.12);
     vec2 dv = (uv - c) * ASPECT;
     float ang = atan(dv.y, dv.x);
-    float n = mix(9.0, 30.0, uP.x);
-    float duty = mix(0.22, 0.72, uP.y);
-    float t = ang / 6.28318 * n + uTime * 0.015;
-    float wedge = step(fract(t), duty);
-    float which = mod(floor(t), 2.0);
-    col = wedge > 0.5 ? (which < 1.0 ? uInk2 : NEARBLACK) : paper;
+    float n = mix(36.0, 120.0, uP.x);
+    float duty = mix(0.05, 0.32, uP.y);
+    float t = ang / 6.28318 * n + uTime * 0.008;
+    float beam = step(fract(t), duty);
+    float index = step(mod(floor(t), 8.0), 0.5);
+    col = paper;
+    col = mix(col, uInk2, beam * 0.9);
+    col = mix(col, NEARBLACK, beam * index);
     col = typeOver(col, uv);
   } else if (uMode < 2.5) {
-    /* ARCS — hand-printed rainbow arches, legs running down the
-       sheet. x = band frequency, y = hand wobble; keylines between
-       bands like a screen print. One continuous wobble field —
-       a split formula seams at the arch/leg boundary. */
+    /* LENS — a fine grid warped by a magnifier at your pin: the
+       portfolio's lens language. x = magnification, y = lens radius. */
     vec2 c = uP;
     vec2 dv = (uv - c) * ASPECT;
-    float freq = mix(4.5, 11.0, uP.x);
-    float wob = mix(0.001, 0.014, uP.y);
-    float wfield = sin(uv.x * 22.0 + uTime * 0.2) * sin(uv.y * 17.0 + 1.7);
-    float d = (dv.y > 0.0 ? length(dv) : abs(dv.x)) + wfield * wob
-            + 0.5 / freq; /* half-band shift: no boundary at the core */
-    float idx = mod(floor(d * freq), 6.0);
-    col = idx < 1.0 ? uInk2
-        : idx < 2.0 ? paper
-        : idx < 3.0 ? mix(uInk2, NEARBLACK, 0.55)
-        : idx < 4.0 ? paper
-        : idx < 5.0 ? NEARBLACK
-        : paper;
-    /* screen-print keyline at every band edge (not at the very core,
-       where d≈0 would draw a seam down the middle of the legs) */
-    col = mix(col, NEARBLACK, step(fract(d * freq), 0.05) * 0.8 * step(0.03, d));
+    float d = length(dv);
+    float R = mix(0.18, 0.46, uP.y);
+    float mag = mix(1.5, 2.8, uP.x);
+    float f = smoothstep(R, 0.0, d);
+    vec2 guv = uv - (dv / ASPECT) * f * (1.0 - 1.0 / mag);
+    vec2 gg = abs(fract(guv * vec2(26.0, 36.77)) - 0.5);
+    float line = 1.0 - step(0.045, min(gg.x, gg.y));
+    vec3 lineCol = mix(uInk2, mix(uInk2, NEARBLACK, 0.6), f);
+    col = mix(paper, lineCol, line);
+    /* the lens rim, thin and exact */
+    col = mix(col, NEARBLACK, smoothstep(0.005, 0.0015, abs(d - R)));
     col = typeOver(col, uv);
   } else if (uMode < 3.5) {
     /* SPLIT — two inks, off register, over a duotone halftone wash
