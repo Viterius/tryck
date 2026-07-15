@@ -55,21 +55,39 @@ export function drawType(canvas, { text, layout, seed }) {
   const words = (text.trim() || "TRYCK").toUpperCase().split(/\s+/).slice(0, 12);
 
   if (layout === "stack") {
+    /* the OH HI stack: every word the same size, left-aligned; the
+       LAST word fills the width and drags down to the poster's edge */
     const contentW = W - mx * 2;
-    const contentH = H - mx * 2 - H * 0.05;
-    ctx.font = `100px "Anton", sans-serif`;
-    const sizes = words.map((w) => Math.min((100 * contentW) / Math.max(ctx.measureText(w).width, 1), H * 0.34));
-    const total = sizes.reduce((a, s) => a + s * 1.03, 0);
-    const k = total > contentH ? contentH / total : 1;
-    let y = mx + (contentH - total * k) / 2;
+    const bottom = H - H * 0.055 - mx * 0.4;
     ctx.textBaseline = "top";
-    words.forEach((w, i) => {
-      const s = sizes[i] * k;
+    ctx.font = `100px "Anton", sans-serif`;
+    const head = words.slice(0, -1);
+    const last = words[words.length - 1];
+    let y = mx;
+    if (head.length) {
+      /* common size: the widest head word fills the column */
+      const s = Math.min(
+        ...head.map((w) => (100 * contentW) / Math.max(ctx.measureText(w).width, 1)),
+        H * 0.2
+      );
       ctx.font = `${s}px "Anton", sans-serif`;
-      const ww = ctx.measureText(w).width;
-      ctx.fillText(w, mx + (contentW - ww) / 2, y);
-      y += s * 1.03;
-    });
+      head.forEach((w) => {
+        ctx.fillText(w, mx, y);
+        y += s * 1.02;
+      });
+      y += s * 0.06;
+    }
+    /* last word: fill the width, then stretch to the bottom edge */
+    ctx.font = `100px "Anton", sans-serif`;
+    const ls = (100 * contentW) / Math.max(ctx.measureText(last).width, 1);
+    const room = Math.max(bottom - y, ls * 0.6);
+    const stretch = room / ls;
+    ctx.save();
+    ctx.translate(mx, y);
+    ctx.scale(1, stretch);
+    ctx.font = `${ls}px "Anton", sans-serif`;
+    ctx.fillText(last, 0, 0);
+    ctx.restore();
   } else if (layout === "corner") {
     /* gallery-poster caption: modest lines, bottom-left, under the art */
     const contentW = W - mx * 2;
@@ -147,24 +165,11 @@ const vec2 ASPECT = vec2(1.0, 1.4142);
 
 float hash(vec2 p) { return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
 
-/* the readable-type pass: a tight paper outline + near-black ink.
-   Tap radius is small so it hugs even the tiny colophon (a wide
-   halo reads as ghost copies behind small text). */
-vec3 typeOver(vec3 col, vec2 uv, vec3 inkCol) {
-  float a = texture2D(uType, uv).a;
-  float halo = a;
-  const float r = 0.0017;
-  const float rd = 0.0012;
-  halo = max(halo, texture2D(uType, uv + vec2( r, 0.0)).a);
-  halo = max(halo, texture2D(uType, uv + vec2(-r, 0.0)).a);
-  halo = max(halo, texture2D(uType, uv + vec2(0.0,  r * 1.4142)).a);
-  halo = max(halo, texture2D(uType, uv + vec2(0.0, -r * 1.4142)).a);
-  halo = max(halo, texture2D(uType, uv + vec2( rd,  rd)).a);
-  halo = max(halo, texture2D(uType, uv + vec2(-rd,  rd)).a);
-  halo = max(halo, texture2D(uType, uv + vec2( rd, -rd)).a);
-  halo = max(halo, texture2D(uType, uv + vec2(-rd, -rd)).a);
-  col = mix(col, uPaper, halo * 0.92);
-  return mix(col, inkCol, a);
+/* the type pass: printed straight in the pair's INK — no outline,
+   no plate. Where it crosses a same-ink band it merges; that
+   figure-ground play is the reference's language, not a bug. */
+vec3 typeOver(vec3 col, vec2 uv) {
+  return mix(col, uInk, texture2D(uType, uv).a);
 }
 
 /* ── the full material stack as a function, so the fold zone can
@@ -184,7 +189,7 @@ vec3 material(vec2 uv) {
     float d = length(dv) + sin(ang * 6.0 + uTime * 0.4) * wob;
     float band = mod(floor(d * freq), 4.0);
     col = band < 1.0 ? uInk : (band < 2.0 ? paper : (band < 3.0 ? uInk2 : NEARBLACK));
-    col = typeOver(col, uv, NEARBLACK);
+    col = typeOver(col, uv);
   } else if (uMode < 1.5) {
     /* RAYS — a fan from beyond the top-right corner, no visible
        center. x = how many rays, y = how thick they are. */
@@ -197,7 +202,7 @@ vec3 material(vec2 uv) {
     float wedge = step(fract(t), duty);
     float which = mod(floor(t), 2.0);
     col = wedge > 0.5 ? (which < 1.0 ? uInk : uInk2) : paper;
-    col = typeOver(col, uv, NEARBLACK);
+    col = typeOver(col, uv);
   } else if (uMode < 2.5) {
     /* ARCS — hand-printed rainbow arches, legs running down the
        sheet. x = band frequency, y = hand wobble; keylines between
@@ -220,7 +225,7 @@ vec3 material(vec2 uv) {
     /* screen-print keyline at every band edge (not at the very core,
        where d≈0 would draw a seam down the middle of the legs) */
     col = mix(col, NEARBLACK, step(fract(d * freq), 0.05) * 0.8 * step(0.03, d));
-    col = typeOver(col, uv, NEARBLACK);
+    col = typeOver(col, uv);
   } else if (uMode < 3.5) {
     /* SPLIT — two inks, off register, over a duotone halftone wash
        that flows in the direction of your pin */
