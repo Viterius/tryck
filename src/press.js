@@ -1,12 +1,12 @@
 /**
  * ─── press.js ─────────────────────────────────────────────────────
  * The whole press: type layer (2D canvas → alpha mask), WebGL1
- * material renderer, and the print-res PNG export. No libraries —
- * one quad, one shader, one glyph atlas for the ASCII material.
+ * material renderer, and the print-res PNG export. No libraries.
  *
- * uKick is the press moment: a fold-curtain deformation that rides
- * on top of ANY material while the sheet ejects — the same fabric
- * language as viterius.com, making a cameo.
+ * Materials own the BACKGROUND; the type stays readable on top
+ * (paper plate + near-black ink, or knocked out in paper).
+ * The press exit is a screen-space fold: content bends and
+ * chromatic-splits exactly where it crosses the viewport edge.
  */
 
 /* ── Riso ink pairs — paper, ink, second ink ────────────────────── */
@@ -20,16 +20,17 @@ export const INKS = [
 
 /* order matters — index = uMode in the shader */
 export const MATERIALS = [
-  { id: "fold", label: "Fold" },
   { id: "bauhaus", label: "Bauhaus" },
+  { id: "sunrise", label: "Sunrise" },
+  { id: "pop", label: "Pop" },
   { id: "split", label: "Split" },
   { id: "melt", label: "Melt" },
-  { id: "ascii", label: "Ascii" },
-  { id: "scan", label: "Scan" },
 ];
 
 export const LAYOUTS = [
   { id: "stack", label: "Stack" },
+  { id: "corner", label: "Corner" },
+  { id: "spine", label: "Spine" },
   { id: "tilt", label: "Tilt" },
 ];
 
@@ -64,7 +65,36 @@ export function drawType(canvas, { text, layout, seed }) {
       ctx.fillText(w, mx + (contentW - ww) / 2, y);
       y += s * 1.03;
     });
+  } else if (layout === "corner") {
+    /* gallery-poster caption: modest lines, bottom-left, under the art */
+    const contentW = W - mx * 2;
+    ctx.font = `100px "Anton", sans-serif`;
+    const sizes = words.map((w) =>
+      Math.min((100 * contentW * 0.52) / Math.max(ctx.measureText(w).width, 1), H * 0.052)
+    );
+    const total = sizes.reduce((a, s) => a + s * 1.08, 0);
+    let y = H - mx - H * 0.035 - total;
+    ctx.textBaseline = "top";
+    words.forEach((w, i) => {
+      ctx.font = `${sizes[i]}px "Anton", sans-serif`;
+      ctx.fillText(w, mx, y);
+      y += sizes[i] * 1.08;
+    });
+  } else if (layout === "spine") {
+    /* vertical type up the left edge — reads bottom to top */
+    const line = words.join(" ");
+    ctx.save();
+    ctx.translate(mx, H - mx - H * 0.04);
+    ctx.rotate(-Math.PI / 2);
+    const runway = H - mx * 2 - H * 0.05;
+    ctx.font = `100px "Anton", sans-serif`;
+    const s = Math.min((100 * runway) / Math.max(ctx.measureText(line).width, 1), W * 0.16);
+    ctx.font = `${s}px "Anton", sans-serif`;
+    ctx.textBaseline = "top";
+    ctx.fillText(line, 0, 0);
+    ctx.restore();
   } else {
+    /* tilt: repeating rows on a slight diagonal */
     const line = words.join(" ") + "  ·  ";
     const s = W * 0.15;
     ctx.font = `${s}px "Anton", sans-serif`;
@@ -86,25 +116,7 @@ export function drawType(canvas, { text, layout, seed }) {
 
   ctx.font = `500 ${Math.max(W * 0.013, 11)}px "IBM Plex Mono", monospace`;
   ctx.textBaseline = "alphabetic";
-  ctx.fillText(`TRYCK N°${seed} — a little poster press · viterius.com`, mx, H - mx * 0.55);
-}
-
-/* ── ASCII glyph atlas: 10 characters, light → dark ─────────────── */
-const CHARSET = " .:-=+*x#@";
-function buildAtlas() {
-  const cell = 64;
-  const c = document.createElement("canvas");
-  c.width = cell * CHARSET.length;
-  c.height = cell;
-  const ctx = c.getContext("2d");
-  ctx.fillStyle = "#fff";
-  ctx.font = `500 ${cell * 0.82}px "IBM Plex Mono", monospace`;
-  ctx.textAlign = "center";
-  ctx.textBaseline = "middle";
-  for (let i = 0; i < CHARSET.length; i++) {
-    ctx.fillText(CHARSET[i], i * cell + cell / 2, cell * 0.54);
-  }
-  return c;
+  ctx.fillText(`TRYCK N°${seed} — a little poster press · viterius.com`, layout === "corner" || layout === "spine" ? W - mx - ctx.measureText(`TRYCK N°${seed} — a little poster press · viterius.com`).width : mx, H - mx * 0.55);
 }
 
 /* ── Shaders ────────────────────────────────────────────────────── */
@@ -118,7 +130,6 @@ const FRAG = `
 precision highp float;
 varying vec2 vUv;
 uniform sampler2D uType;
-uniform sampler2D uAtlas;
 uniform vec3 uPaper, uInk, uInk2;
 uniform float uMode, uTime;
 uniform vec2 uP;
@@ -126,72 +137,95 @@ uniform vec2 uP;
    line, both in this canvas's v space (y-up). Inactive: x=1, y=0. */
 uniform vec2 uLines;
 
+const vec3 NEARBLACK = vec3(0.10, 0.09, 0.085);
+const vec2 ASPECT = vec2(1.0, 1.4142);
+
 float hash(vec2 p) { return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
 
-/* one Bauhaus primitive in cell space (q: 0..1), oriented by o */
+/* one geometric primitive in local space (q: 0..1), oriented by o */
 float shapeMask(vec2 q, float pick, float o) {
+  if (q.x < 0.0 || q.x > 1.0 || q.y < 0.0 || q.y > 1.0) return 0.0;
   if (o > 0.75)      q = vec2(q.y, 1.0 - q.x);
   else if (o > 0.5)  q = 1.0 - q;
   else if (o > 0.25) q = vec2(1.0 - q.y, q.x);
-  if (pick < 0.30) return 1.0;                                        /* square */
-  if (pick < 0.50) return step(length(q - 0.5), 0.5);                 /* circle */
-  if (pick < 0.68) return step(length(q - vec2(0.5, 0.0)), 0.5);      /* semicircle */
-  if (pick < 0.82) return step(length(q), 1.0);                       /* quarter disc */
-  if (pick < 0.94) return step(q.x, q.y);                             /* triangle */
-  return step(abs(length(q - 0.5) - 0.34), 0.10);                     /* ring */
+  if (pick < 0.22) return step(length(q - 0.5), 0.5);                 /* disc */
+  if (pick < 0.42) return step(length(q - vec2(0.5, 0.0)), 0.5);      /* semicircle */
+  if (pick < 0.58) return step(length(q), 1.0);                       /* quarter disc */
+  if (pick < 0.72) return step(q.x, q.y);                             /* triangle */
+  if (pick < 0.86) return step(abs(length(q - 0.5) - 0.36), 0.10);    /* ring */
+  return step(abs(q.y - 0.5), 0.18);                                  /* bar */
+}
+
+/* the readable-type pass: paper plate halo + near-black ink on top */
+vec3 typeOver(vec3 col, vec2 uv, vec3 inkCol) {
+  float a = texture2D(uType, uv).a;
+  float halo = a;
+  halo = max(halo, texture2D(uType, uv + vec2( 0.006, 0.0)).a);
+  halo = max(halo, texture2D(uType, uv + vec2(-0.006, 0.0)).a);
+  halo = max(halo, texture2D(uType, uv + vec2(0.0,  0.0085)).a);
+  halo = max(halo, texture2D(uType, uv + vec2(0.0, -0.0085)).a);
+  col = mix(col, uPaper, halo * 0.9);
+  return mix(col, inkCol, a);
 }
 
 /* ── the full material stack as a function, so the fold zone can
    sample it three times for TRUE whole-image chromatic splitting ── */
 vec3 material(vec2 uv) {
   vec3 col;
+  vec3 paper = uPaper + (hash(uv * 780.0) - 0.5) * 0.03;
+
   if (uMode < 0.5) {
-    /* FOLD — soft curtains: displacement + shading bands */
-    float waves = 2.0 + uP.x * 8.0;
-    float depth = uP.y;
-    float amp = 0.002 + depth * 0.028;
-    float ph = uv.x * waves * 6.28318 + uTime * 0.25;
-    uv.x += sin(ph) * amp * (0.65 + 0.35 * sin(uv.y * 3.1));
-    uv.y += cos(ph * 0.5) * amp * 0.3;
-    float a = texture2D(uType, uv).a;
-    col = mix(uPaper, uInk, a);
-    float band = 0.5 - 0.5 * cos(ph + 1.3);
-    col *= 1.0 - depth * 0.42 * band;
-    col += depth * 0.06 * (1.0 - band);
+    /* BAUHAUS — a big geometric composition behind readable type.
+       x picks the arrangement (12 variants), y sets how busy. */
+    float variant = floor(uP.x * 12.0);
+    float count = 3.0 + floor(uP.y * 5.0);   /* 3..8 large shapes */
+    col = paper;
+    for (int i = 0; i < 8; i++) {
+      if (float(i) >= count) break;
+      vec2 sd = vec2(float(i) * 3.7 + variant * 13.1, variant * 7.3 + float(i));
+      vec2 pos = vec2(0.12 + hash(sd) * 0.76, 0.18 + hash(sd + 1.3) * 0.72);
+      float size = 0.16 + hash(sd + 2.6) * 0.30;
+      vec2 q = (vUvToLocal(uv, pos, size));
+      float m = shapeMask(q, hash(sd + 4.1), hash(sd + 5.9));
+      float cr = hash(sd + 7.7);
+      vec3 sc = cr < 0.42 ? uInk : (cr < 0.72 ? uInk2 : NEARBLACK);
+      col = mix(col, sc, m);
+    }
+    col = typeOver(col, uv, NEARBLACK);
   } else if (uMode < 1.5) {
-    /* BAUHAUS — the type rebuilt from geometric primitives.
-       x: grid scale · y: playfulness (solid type → pure geometry) */
-    float grid = mix(13.0, 36.0, uP.x);
-    vec2 cells = vec2(grid, grid * 1.4142);
-    vec2 cellId = floor(uv * cells);
-    vec2 cellUv = fract(uv * cells);
-    vec2 center = (cellId + 0.5) / cells;
-    float a = texture2D(uType, center).a;
-    float on = step(0.35, a);
-    float play = uP.y;
-    /* shape variety opens up with playfulness; squares keep it readable */
-    float pick = hash(cellId) * mix(0.28, 0.9, play);
-    float orient = hash(cellId + 4.7);
-    float m = shapeMask(cellUv, pick, orient);
-    /* palette: ink leads, second ink seconds, near-black punctuates */
-    float cr = hash(cellId + 9.3);
-    vec3 shapeCol = cr < 0.52 ? uInk : (cr < 0.82 ? uInk2 : vec3(0.10, 0.09, 0.085));
-    vec3 paper = uPaper + (hash(uv * 750.0) - 0.5) * 0.02;
-    col = mix(paper, shapeCol, m * on);
-    /* sparse accents wandering the empty paper */
-    float stray = step(1.0 - play * 0.055, hash(cellId + 2.2));
-    float ms = shapeMask(cellUv, 0.3 + hash(cellId + 6.1) * 0.7, hash(cellId + 8.8));
-    col = mix(col, cr < 0.5 ? uInk2 : vec3(0.10, 0.09, 0.085), ms * stray * (1.0 - on));
+    /* SUNRISE — grainy gradient field; the sun follows your pin */
+    vec2 c = vec2(uP.x, 0.45 + uP.y * 0.35);
+    float d = distance(uv * ASPECT, c * ASPECT);
+    vec3 glow = mix(uInk2, uInk, smoothstep(0.05, 0.85, d));
+    col = mix(glow, uPaper * 0.97, smoothstep(0.45, 1.05, d));
+    float sun = 1.0 - smoothstep(0.16, 0.175, d);
+    col = mix(col, mix(uInk2, uPaper, 0.35), sun);
+    /* horizon haze bands */
+    col = mix(col, uInk, 0.10 * (0.5 + 0.5 * sin(uv.y * 28.0)) * smoothstep(0.5, 0.0, abs(uv.y - c.y)));
+    /* heavy film grain — the shaders.com texture */
+    col += (hash(uv * 900.0) - 0.5) * 0.085;
+    /* type knocked out in paper, with a soft drop shadow */
+    float sh = texture2D(uType, uv + vec2(0.004, 0.006)).a;
+    col = mix(col, col * 0.55, sh * 0.5);
+    col = mix(col, uPaper, texture2D(uType, uv).a);
   } else if (uMode < 2.5) {
+    /* POP — groovy concentric waves centered on your pin */
+    vec2 c = uP;
+    vec2 dv = (uv - c) * ASPECT;
+    float ang = atan(dv.y, dv.x);
+    float d = length(dv) + sin(ang * 6.0 + uTime * 0.4) * 0.018;
+    float band = mod(floor(d * 11.0), 4.0);
+    col = band < 1.0 ? uInk : (band < 2.0 ? paper : (band < 3.0 ? uInk2 : NEARBLACK));
+    col = typeOver(col, uv, NEARBLACK);
+  } else if (uMode < 3.5) {
     /* SPLIT — two inks, off register; overlap overprints darker */
     vec2 off = (uP - 0.5) * 0.045;
     float a1 = texture2D(uType, uv + off).a;
     float a2 = texture2D(uType, uv - off).a;
-    col = uPaper;
+    col = paper;
     col = mix(col, uInk, a1);
     col = mix(col, mix(uInk2, uInk * uInk2 * 1.7, a1), a2 * 0.92);
-    col += (hash(uv * 800.0) - 0.5) * 0.03;
-  } else if (uMode < 3.5) {
+  } else {
     /* MELT — the ink hasn't dried; it drips down the sheet */
     float cols = mix(24.0, 130.0, uP.x);
     float amt = uP.y * 0.35;
@@ -203,39 +237,9 @@ vec3 material(vec2 uv) {
       float aa = texture2D(uType, vec2(uv.x, uv.y + k * amt * drip)).a;
       a = max(a, aa * (1.0 - k * 0.5));
     }
-    float tooth = (hash(uv * 700.0) - 0.5) * 0.04;
-    col = mix(uPaper + tooth, uInk, a);
-  } else if (uMode < 4.5) {
-    /* ASCII — the poster re-typeset in terminal characters */
-    float grid = mix(38.0, 105.0, uP.x);
-    vec2 cells = vec2(grid, grid / 1.4142);
-    vec2 cellId = floor(uv * cells);
-    vec2 cellUv = fract(uv * cells);
-    vec2 center = (cellId + 0.5) / cells;
-    float a = texture2D(uType, center).a;
-    float idx = floor(clamp(a, 0.0, 0.999) * 10.0);
-    float ga = texture2D(uAtlas, vec2((idx + cellUv.x) / 10.0, cellUv.y)).a;
-    float on = step(0.04, a);
-    col = mix(uPaper + (hash(uv * 700.0) - 0.5) * 0.025, uInk, ga * on);
-    /* background static — faint characters in the empty paper */
-    float bgIdx = 1.0 + floor(hash(cellId) * 2.0);
-    float gbg = texture2D(uAtlas, vec2((bgIdx + cellUv.x) / 10.0, cellUv.y)).a;
-    col = mix(col, mix(uInk, uInk2, hash(cellId + 9.0)), gbg * (1.0 - on) * uP.y * 0.35);
-  } else {
-    /* SCAN — sliced misprint with channel drift */
-    float rows = mix(10.0, 90.0, uP.x);
-    float amt = uP.y;
-    float row = floor(uv.y * rows);
-    float jolt = (hash(vec2(row, 3.0)) - 0.5) * amt * 0.22;
-    vec2 u2 = vec2(uv.x + jolt, uv.y);
-    float aC = texture2D(uType, u2).a;
-    float a1 = texture2D(uType, u2 + vec2(amt * 0.014, 0.0)).a;
-    float a2 = texture2D(uType, u2 - vec2(amt * 0.014, 0.0)).a;
-    col = uPaper + (hash(uv * 640.0) - 0.5) * 0.03;
-    col = mix(col, uInk2, clamp(a1 - aC, 0.0, 1.0));
-    col = mix(col, uInk2 * 0.8, clamp(a2 - aC, 0.0, 1.0) * 0.7);
-    col = mix(col, uInk, aC);
+    col = mix(paper, uInk, a);
   }
+
   return col;
 }
 
@@ -243,9 +247,7 @@ void main() {
   vec2 uv = vUv;
 
   /* ── the portfolio fold, screen-space: content bends exactly where
-     it crosses the viewport edge. Within a band next to the fold
-     line, sampling compresses hard toward the line (paper going over
-     a roller); foldZ then drives the chromatic split + shading. ── */
+     it crosses the viewport edge; foldZ drives the chromatic split ── */
   float foldZ = 0.0;
   const float w = 0.30;
   if (uLines.x < 0.999) {              /* exiting through the top */
@@ -271,20 +273,25 @@ void main() {
 
   vec3 col;
   if (foldZ > 0.001) {
-    /* true chromatic aberration: R/G/B sampled at diverging points
-       along the direction of travel — the whole image splits, not
-       just the type. This is the portfolio's fold signature. */
+    /* true chromatic aberration: R/G/B sampled at diverging points */
     vec2 off = vec2(0.0, 0.028 * foldZ * foldZ + 0.004 * foldZ);
     col.r = material(uv + off).r;
     col.g = material(uv).g;
     col.b = material(uv - off).b;
-    col *= 1.0 - foldZ * 0.5;          /* bending into shadow */
-    col += pow(foldZ, 5.0) * 0.45;     /* the crease catching light */
+    col *= 1.0 - foldZ * 0.5;
+    col += pow(foldZ, 5.0) * 0.45;
   } else {
     col = material(uv);
   }
 
   gl_FragColor = vec4(col, 1.0);
+}
+`;
+
+/* small helper injected above material() — local coords for a shape */
+const HELPERS = `
+vec2 vUvToLocal(vec2 uv, vec2 pos, float size) {
+  return (uv * vec2(1.0, 1.4142) - pos * vec2(1.0, 1.4142)) / size + 0.5;
 }
 `;
 
@@ -299,9 +306,10 @@ export function createPress(glCanvas) {
     if (!gl.getShaderParameter(s, gl.COMPILE_STATUS)) throw new Error(gl.getShaderInfoLog(s));
     return s;
   };
+  const frag = FRAG.replace("float shapeMask", HELPERS + "\nfloat shapeMask");
   const prog = gl.createProgram();
   gl.attachShader(prog, compile(gl.VERTEX_SHADER, VERT));
-  gl.attachShader(prog, compile(gl.FRAGMENT_SHADER, FRAG));
+  gl.attachShader(prog, compile(gl.FRAGMENT_SHADER, frag));
   gl.linkProgram(prog);
   gl.useProgram(prog);
 
@@ -313,33 +321,22 @@ export function createPress(glCanvas) {
   gl.vertexAttribPointer(aPos, 2, gl.FLOAT, false, 0, 0);
 
   gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, true);
-
-  const makeTex = (unit) => {
-    gl.activeTexture(gl.TEXTURE0 + unit);
-    const t = gl.createTexture();
-    gl.bindTexture(gl.TEXTURE_2D, t);
-    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
-    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
-    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
-    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
-    return t;
-  };
-
-  const typeTex = makeTex(0);
-  makeTex(1);
-  gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, buildAtlas());
+  const tex = gl.createTexture();
+  gl.bindTexture(gl.TEXTURE_2D, tex);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
 
   const U = {};
-  ["uType", "uAtlas", "uPaper", "uInk", "uInk2", "uMode", "uTime", "uP", "uLines"].forEach((n) => {
+  ["uType", "uPaper", "uInk", "uInk2", "uMode", "uTime", "uP", "uLines"].forEach((n) => {
     U[n] = gl.getUniformLocation(prog, n);
   });
   gl.uniform1i(U.uType, 0);
-  gl.uniform1i(U.uAtlas, 1);
 
   return {
     setType(typeCanvas) {
-      gl.activeTexture(gl.TEXTURE0);
-      gl.bindTexture(gl.TEXTURE_2D, typeTex);
+      gl.bindTexture(gl.TEXTURE_2D, tex);
       gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, typeCanvas);
     },
     render({ inks, mode, p, time, lines = [1, 0] }) {

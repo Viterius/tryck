@@ -19,7 +19,7 @@ const EJECT_MS = 500;
 export default function App() {
   const [text, setText] = useState("PRESS SOMETHING BEAUTIFUL");
   const [inkId, setInkId] = useState("blue");
-  const [mode, setMode] = useState("fold");
+  const [mode, setMode] = useState("bauhaus");
   const [layout, setLayout] = useState("stack");
   const [pos, setPos] = useState({ x: 0.35, y: 0.35 }); // pinned params
   const [hover, setHover] = useState(null);

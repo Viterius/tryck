@@ -8,13 +8,15 @@
 
 ## What it does
 
-Type a few words and TRYCK sets them in big type on an A-series poster.
-Glide over the poster to work the material — fold, riso grain, two-ink
-split, melt, letterpress deboss, or scan — in classic riso ink pairs.
-Click to pin what you found; click again to keep working. **Press**
-runs the press: the sheet ejects, a print-ready PNG (2000 × 2828)
-downloads, and a fresh sheet feeds in. Every poster is numbered by the
-global press count. It's yours.
+Type a few words and TRYCK sets them on an A-series poster in one of
+four layouts — stacked, corner caption, vertical spine, or tilted
+repeat. Glide over the poster to work the material: Bauhaus shape
+compositions, grainy sunrise gradients, groovy pop waves, two-ink
+split, or melting ink — in classic riso pairs. Click to pin what you
+found; click again to keep working. **Press** runs the press: the
+sheet folds out of the screen with chromatic creases, a print-ready
+PNG (2000 × 2828) downloads, and a fresh sheet feeds in. Every poster
+is numbered by the global press count. It's yours.
 
 No accounts, no uploads, no tracking. Everything renders in your
 browser; the poster never leaves your machine.
