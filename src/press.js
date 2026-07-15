@@ -60,8 +60,9 @@ export function drawType(canvas, { text, layout, seed }) {
        vertical stretch. Works for one word or twelve — no overlap,
        no dead space, pure Swiss-poster wall of type. */
     const contentW = W - mx * 2;
-    const contentH = H - mx * 1.7;
-    const cap = H * 0.85; /* safety only — a lone "I" stays a letter */
+    const top = H * 0.47;              /* the art gets the top half */
+    const contentH = H - mx * 0.9 - top;
+    const cap = H * 0.42; /* safety only — a lone "I" stays a letter */
     ctx.textBaseline = "alphabetic";
     const fillSize = (str) => {
       ctx.font = `100px "Anton", sans-serif`;
@@ -90,7 +91,7 @@ export function drawType(canvas, { text, layout, seed }) {
     const k = Math.min(contentH / total, 1.75); /* squish beats crop */
     const leftover = Math.max(contentH - total * k, 0);
     const gap = fit.length > 1 ? leftover / (fit.length - 1) : 0;
-    let y = mx + (fit.length === 1 ? leftover / 2 : 0);
+    let y = top + (fit.length === 1 ? leftover / 2 : 0);
     fit.forEach((f) => {
       y += f.asc * k;
       ctx.save();
