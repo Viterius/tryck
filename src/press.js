@@ -18,11 +18,13 @@ export const INKS = [
   { id: "black", paper: "#efece3", ink: "#17150f", ink2: "#f15060" },
 ];
 
-/* order matters — index = uMode in the shader */
+/* order matters — index = uMode in the shader.
+   THE LAW (learned from Pop): the background is the instrument and
+   fills the whole sheet; the type is SET — always readable. */
 export const MATERIALS = [
-  { id: "bauhaus", label: "Bauhaus" },
-  { id: "sunrise", label: "Sunrise" },
   { id: "pop", label: "Pop" },
+  { id: "rays", label: "Rays" },
+  { id: "arcs", label: "Arcs" },
   { id: "split", label: "Split" },
   { id: "melt", label: "Melt" },
 ];
@@ -142,29 +144,23 @@ const vec2 ASPECT = vec2(1.0, 1.4142);
 
 float hash(vec2 p) { return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
 
-/* one geometric primitive in local space (q: 0..1), oriented by o */
-float shapeMask(vec2 q, float pick, float o) {
-  if (q.x < 0.0 || q.x > 1.0 || q.y < 0.0 || q.y > 1.0) return 0.0;
-  if (o > 0.75)      q = vec2(q.y, 1.0 - q.x);
-  else if (o > 0.5)  q = 1.0 - q;
-  else if (o > 0.25) q = vec2(1.0 - q.y, q.x);
-  if (pick < 0.22) return step(length(q - 0.5), 0.5);                 /* disc */
-  if (pick < 0.42) return step(length(q - vec2(0.5, 0.0)), 0.5);      /* semicircle */
-  if (pick < 0.58) return step(length(q), 1.0);                       /* quarter disc */
-  if (pick < 0.72) return step(q.x, q.y);                             /* triangle */
-  if (pick < 0.86) return step(abs(length(q - 0.5) - 0.36), 0.10);    /* ring */
-  return step(abs(q.y - 0.5), 0.18);                                  /* bar */
-}
-
-/* the readable-type pass: paper plate halo + near-black ink on top */
+/* the readable-type pass: a tight paper outline + near-black ink.
+   Tap radius is small so it hugs even the tiny colophon (a wide
+   halo reads as ghost copies behind small text). */
 vec3 typeOver(vec3 col, vec2 uv, vec3 inkCol) {
   float a = texture2D(uType, uv).a;
   float halo = a;
-  halo = max(halo, texture2D(uType, uv + vec2( 0.006, 0.0)).a);
-  halo = max(halo, texture2D(uType, uv + vec2(-0.006, 0.0)).a);
-  halo = max(halo, texture2D(uType, uv + vec2(0.0,  0.0085)).a);
-  halo = max(halo, texture2D(uType, uv + vec2(0.0, -0.0085)).a);
-  col = mix(col, uPaper, halo * 0.9);
+  const float r = 0.0017;
+  const float rd = 0.0012;
+  halo = max(halo, texture2D(uType, uv + vec2( r, 0.0)).a);
+  halo = max(halo, texture2D(uType, uv + vec2(-r, 0.0)).a);
+  halo = max(halo, texture2D(uType, uv + vec2(0.0,  r * 1.4142)).a);
+  halo = max(halo, texture2D(uType, uv + vec2(0.0, -r * 1.4142)).a);
+  halo = max(halo, texture2D(uType, uv + vec2( rd,  rd)).a);
+  halo = max(halo, texture2D(uType, uv + vec2(-rd,  rd)).a);
+  halo = max(halo, texture2D(uType, uv + vec2( rd, -rd)).a);
+  halo = max(halo, texture2D(uType, uv + vec2(-rd, -rd)).a);
+  col = mix(col, uPaper, halo * 0.92);
   return mix(col, inkCol, a);
 }
 
@@ -175,40 +171,6 @@ vec3 material(vec2 uv) {
   vec3 paper = uPaper + (hash(uv * 780.0) - 0.5) * 0.03;
 
   if (uMode < 0.5) {
-    /* BAUHAUS — a big geometric composition behind readable type.
-       x picks the arrangement (12 variants), y sets how busy. */
-    float variant = floor(uP.x * 12.0);
-    float count = 3.0 + floor(uP.y * 5.0);   /* 3..8 large shapes */
-    col = paper;
-    for (int i = 0; i < 8; i++) {
-      if (float(i) >= count) break;
-      vec2 sd = vec2(float(i) * 3.7 + variant * 13.1, variant * 7.3 + float(i));
-      vec2 pos = vec2(0.12 + hash(sd) * 0.76, 0.18 + hash(sd + 1.3) * 0.72);
-      float size = 0.16 + hash(sd + 2.6) * 0.30;
-      vec2 q = (vUvToLocal(uv, pos, size));
-      float m = shapeMask(q, hash(sd + 4.1), hash(sd + 5.9));
-      float cr = hash(sd + 7.7);
-      vec3 sc = cr < 0.42 ? uInk : (cr < 0.72 ? uInk2 : NEARBLACK);
-      col = mix(col, sc, m);
-    }
-    col = typeOver(col, uv, NEARBLACK);
-  } else if (uMode < 1.5) {
-    /* SUNRISE — grainy gradient field; the sun follows your pin */
-    vec2 c = vec2(uP.x, 0.45 + uP.y * 0.35);
-    float d = distance(uv * ASPECT, c * ASPECT);
-    vec3 glow = mix(uInk2, uInk, smoothstep(0.05, 0.85, d));
-    col = mix(glow, uPaper * 0.97, smoothstep(0.45, 1.05, d));
-    float sun = 1.0 - smoothstep(0.16, 0.175, d);
-    col = mix(col, mix(uInk2, uPaper, 0.35), sun);
-    /* horizon haze bands */
-    col = mix(col, uInk, 0.10 * (0.5 + 0.5 * sin(uv.y * 28.0)) * smoothstep(0.5, 0.0, abs(uv.y - c.y)));
-    /* heavy film grain — the shaders.com texture */
-    col += (hash(uv * 900.0) - 0.5) * 0.085;
-    /* type knocked out in paper, with a soft drop shadow */
-    float sh = texture2D(uType, uv + vec2(0.004, 0.006)).a;
-    col = mix(col, col * 0.55, sh * 0.5);
-    col = mix(col, uPaper, texture2D(uType, uv).a);
-  } else if (uMode < 2.5) {
     /* POP — groovy concentric waves centered on your pin */
     vec2 c = uP;
     vec2 dv = (uv - c) * ASPECT;
@@ -216,6 +178,34 @@ vec3 material(vec2 uv) {
     float d = length(dv) + sin(ang * 6.0 + uTime * 0.4) * 0.018;
     float band = mod(floor(d * 11.0), 4.0);
     col = band < 1.0 ? uInk : (band < 2.0 ? paper : (band < 3.0 ? uInk2 : NEARBLACK));
+    col = typeOver(col, uv, NEARBLACK);
+  } else if (uMode < 1.5) {
+    /* RAYS — a sunburst of ink wedges radiating from your pin */
+    vec2 c = uP;
+    vec2 dv = (uv - c) * ASPECT;
+    float ang = atan(dv.y, dv.x) / 6.28318 + 0.5;
+    float idx = mod(floor(ang * 28.0 + uTime * 0.06), 4.0);
+    col = idx < 1.0 ? uInk : (idx < 2.0 ? paper : (idx < 3.0 ? uInk2 : paper));
+    /* the sun itself, right where you pinned */
+    float d = length(dv);
+    col = mix(col, NEARBLACK, step(d, 0.075));
+    col = mix(col, uInk2, step(d, 0.055));
+    col = typeOver(col, uv, NEARBLACK);
+  } else if (uMode < 2.5) {
+    /* ARCS — stacked rainbow arches centered on your pin; the legs
+       run straight down the sheet like a proper print rainbow */
+    vec2 c = uP;
+    vec2 dv = (uv - c) * ASPECT;
+    float d = dv.y > 0.0 ? length(dv) : abs(dv.x);
+    float idx = floor(d * 7.0);
+    if (idx > 5.0) {
+      col = paper;
+    } else if (mod(idx, 2.0) > 0.5) {
+      col = paper;                          /* paper gaps between bands */
+    } else {
+      float which = mod(floor(idx / 2.0), 3.0);
+      col = which < 1.0 ? uInk : (which < 2.0 ? uInk2 : NEARBLACK);
+    }
     col = typeOver(col, uv, NEARBLACK);
   } else if (uMode < 3.5) {
     /* SPLIT — two inks, off register; overlap overprints darker */
@@ -226,18 +216,31 @@ vec3 material(vec2 uv) {
     col = mix(col, uInk, a1);
     col = mix(col, mix(uInk2, uInk * uInk2 * 1.7, a1), a2 * 0.92);
   } else {
-    /* MELT — the ink hasn't dried; it drips down the sheet */
+    /* MELT — the ink hasn't dried; it drips down the sheet, and the
+       top edge of the print bleeds too, so the sheet is never empty */
     float cols = mix(24.0, 130.0, uP.x);
     float amt = uP.y * 0.35;
     float cid = floor(uv.x * cols);
     float drip = pow(hash(vec2(cid, 7.0)), 1.6);
+    col = paper;
+    /* ink bleed from the top edge — hard-edged riso drips, not haze */
+    float reach = (0.06 + pow(hash(vec2(cid, 19.0)), 2.0) * 0.5) * (0.3 + uP.y);
+    float topd = 1.0 - uv.y;
+    float on = step(0.45, hash(vec2(cid, 31.0)));      /* not every column */
+    float body = step(topd, reach) * on;
+    float tip = step(reach, topd) * step(topd, reach + 0.05 * hash(vec2(cid, 57.0))) * on;
+    col = mix(col, uInk, body * (0.55 + hash(vec2(cid, 43.0)) * 0.35));
+    col = mix(col, uInk, tip * 0.25);                   /* thinning tail */
+    /* the type melts on top */
     float a = 0.0;
     for (int i = 0; i < 7; i++) {
       float k = float(i) / 6.0;
       float aa = texture2D(uType, vec2(uv.x, uv.y + k * amt * drip)).a;
       a = max(a, aa * (1.0 - k * 0.5));
     }
-    col = mix(paper, uInk, a);
+    /* the printer's mark stays crisp — colophons don't melt */
+    if (vUv.y < 0.085) a = texture2D(uType, uv).a;
+    col = mix(col, uInk, a);
   }
 
   return col;
@@ -288,13 +291,6 @@ void main() {
 }
 `;
 
-/* small helper injected above material() — local coords for a shape */
-const HELPERS = `
-vec2 vUvToLocal(vec2 uv, vec2 pos, float size) {
-  return (uv * vec2(1.0, 1.4142) - pos * vec2(1.0, 1.4142)) / size + 0.5;
-}
-`;
-
 export function createPress(glCanvas) {
   const gl = glCanvas.getContext("webgl", { preserveDrawingBuffer: true, antialias: true });
   if (!gl) return null;
@@ -306,10 +302,9 @@ export function createPress(glCanvas) {
     if (!gl.getShaderParameter(s, gl.COMPILE_STATUS)) throw new Error(gl.getShaderInfoLog(s));
     return s;
   };
-  const frag = FRAG.replace("float shapeMask", HELPERS + "\nfloat shapeMask");
   const prog = gl.createProgram();
   gl.attachShader(prog, compile(gl.VERTEX_SHADER, VERT));
-  gl.attachShader(prog, compile(gl.FRAGMENT_SHADER, frag));
+  gl.attachShader(prog, compile(gl.FRAGMENT_SHADER, FRAG));
   gl.linkProgram(prog);
   gl.useProgram(prog);
 
