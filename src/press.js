@@ -186,32 +186,30 @@ vec3 material(vec2 uv) {
     col = band < 1.0 ? uInk : (band < 2.0 ? paper : (band < 3.0 ? uInk2 : NEARBLACK));
     col = typeOver(col, uv, NEARBLACK);
   } else if (uMode < 1.5) {
-    /* RAYS — a swirling sunburst. x = spiral twist, y = ray count;
-       the rays bend around the sheet like they were silkscreened
-       by hand on a turntable. */
-    vec2 c = uP;
+    /* RAYS — a fan from beyond the top-right corner, no visible
+       center. x = how many rays, y = how thick they are. */
+    vec2 c = vec2(1.12, 1.12);
     vec2 dv = (uv - c) * ASPECT;
-    float d = length(dv);
-    float twist = (uP.x - 0.5) * 3.2;
-    float n = 4.0 * floor(mix(3.0, 10.0, uP.y));   /* multiple of 4: no seam */
-    float ang = atan(dv.y, dv.x) + d * twist;
-    float idx = mod(floor((ang / 6.28318 + 0.5) * n + uTime * 0.05), 4.0);
-    col = idx < 1.0 ? uInk : (idx < 2.0 ? paper : (idx < 3.0 ? uInk2 : paper));
-    /* the sun itself, right where you pinned */
-    col = mix(col, NEARBLACK, step(d, 0.075));
-    col = mix(col, uInk2, step(d, 0.055));
+    float ang = atan(dv.y, dv.x);
+    float n = mix(9.0, 30.0, uP.x);
+    float duty = mix(0.22, 0.72, uP.y);
+    float t = ang / 6.28318 * n + uTime * 0.015;
+    float wedge = step(fract(t), duty);
+    float which = mod(floor(t), 2.0);
+    col = wedge > 0.5 ? (which < 1.0 ? uInk : uInk2) : paper;
     col = typeOver(col, uv, NEARBLACK);
   } else if (uMode < 2.5) {
     /* ARCS — hand-printed rainbow arches, legs running down the
        sheet. x = band frequency, y = hand wobble; keylines between
-       bands like a screen print. */
+       bands like a screen print. One continuous wobble field —
+       a split formula seams at the arch/leg boundary. */
     vec2 c = uP;
     vec2 dv = (uv - c) * ASPECT;
-    float ang = atan(dv.y, dv.x);
     float freq = mix(4.5, 11.0, uP.x);
     float wob = mix(0.001, 0.014, uP.y);
-    float d = (dv.y > 0.0 ? length(dv) : abs(dv.x))
-            + (dv.y > 0.0 ? sin(ang * 7.0 + uTime * 0.2) : sin(uv.y * 26.0 + uTime * 0.2)) * wob;
+    float wfield = sin(uv.x * 22.0 + uTime * 0.2) * sin(uv.y * 17.0 + 1.7);
+    float d = (dv.y > 0.0 ? length(dv) : abs(dv.x)) + wfield * wob
+            + 0.5 / freq; /* half-band shift: no boundary at the core */
     float idx = mod(floor(d * freq), 6.0);
     col = idx < 1.0 ? uInk
         : idx < 2.0 ? paper
@@ -224,11 +222,19 @@ vec3 material(vec2 uv) {
     col = mix(col, NEARBLACK, step(fract(d * freq), 0.05) * 0.8 * step(0.03, d));
     col = typeOver(col, uv, NEARBLACK);
   } else if (uMode < 3.5) {
-    /* SPLIT — two inks, off register; overlap overprints darker */
+    /* SPLIT — two inks, off register, over a duotone halftone wash
+       that flows in the direction of your pin */
     vec2 off = (uP - 0.5) * 0.045;
+    vec2 dir = normalize(uP - vec2(0.5) + vec2(0.0001));
+    float g = clamp(dot((uv - 0.5) * ASPECT, dir) + 0.5, 0.0, 1.0);
+    vec2 gp = uv * ASPECT * 46.0;
+    gp.y += mod(floor(gp.x), 2.0) * 0.5;
+    float dd = length(fract(gp) - 0.5);
+    float dotm = step(dd, 0.48 * pow(1.0 - g, 1.5));
+    col = paper;
+    col = mix(col, uInk2, dotm * 0.38);
     float a1 = texture2D(uType, uv + off).a;
     float a2 = texture2D(uType, uv - off).a;
-    col = paper;
     col = mix(col, uInk, a1);
     col = mix(col, mix(uInk2, uInk * uInk2 * 1.7, a1), a2 * 0.92);
   } else {
