@@ -15,6 +15,9 @@ export const INKS = [
   { id: "pink", paper: "#f6f0e8", ink: "#ff48b0", ink2: "#0078bf" },
   { id: "orange", paper: "#f4efe3", ink: "#ff6c2f", ink2: "#765ba7" },
   { id: "green", paper: "#f2efe4", ink: "#00a95c", ink2: "#ff6c2f" },
+  { id: "violet", paper: "#f3f0e9", ink: "#765ba7", ink2: "#ffb511" },
+  { id: "teal", paper: "#f0efe6", ink: "#00838a", ink2: "#f15060" },
+  { id: "red", paper: "#f5f0e6", ink: "#ff665e", ink2: "#3255a4" },
   { id: "black", paper: "#efece3", ink: "#17150f", ink2: "#f15060" },
 ];
 
@@ -171,41 +174,54 @@ vec3 material(vec2 uv) {
   vec3 paper = uPaper + (hash(uv * 780.0) - 0.5) * 0.03;
 
   if (uMode < 0.5) {
-    /* POP — groovy concentric waves centered on your pin */
+    /* POP — groovy waves. The pin PLACES the center and SHAPES it:
+       y = ring density, x = wobble amount. */
     vec2 c = uP;
     vec2 dv = (uv - c) * ASPECT;
     float ang = atan(dv.y, dv.x);
-    float d = length(dv) + sin(ang * 6.0 + uTime * 0.4) * 0.018;
-    float band = mod(floor(d * 11.0), 4.0);
+    float freq = mix(7.0, 16.0, uP.y);
+    float wob = mix(0.004, 0.032, uP.x);
+    float d = length(dv) + sin(ang * 6.0 + uTime * 0.4) * wob;
+    float band = mod(floor(d * freq), 4.0);
     col = band < 1.0 ? uInk : (band < 2.0 ? paper : (band < 3.0 ? uInk2 : NEARBLACK));
     col = typeOver(col, uv, NEARBLACK);
   } else if (uMode < 1.5) {
-    /* RAYS — a sunburst of ink wedges radiating from your pin */
+    /* RAYS — a swirling sunburst. x = spiral twist, y = ray count;
+       the rays bend around the sheet like they were silkscreened
+       by hand on a turntable. */
     vec2 c = uP;
     vec2 dv = (uv - c) * ASPECT;
-    float ang = atan(dv.y, dv.x) / 6.28318 + 0.5;
-    float idx = mod(floor(ang * 28.0 + uTime * 0.06), 4.0);
+    float d = length(dv);
+    float twist = (uP.x - 0.5) * 3.2;
+    float n = 4.0 * floor(mix(3.0, 10.0, uP.y));   /* multiple of 4: no seam */
+    float ang = atan(dv.y, dv.x) + d * twist;
+    float idx = mod(floor((ang / 6.28318 + 0.5) * n + uTime * 0.05), 4.0);
     col = idx < 1.0 ? uInk : (idx < 2.0 ? paper : (idx < 3.0 ? uInk2 : paper));
     /* the sun itself, right where you pinned */
-    float d = length(dv);
     col = mix(col, NEARBLACK, step(d, 0.075));
     col = mix(col, uInk2, step(d, 0.055));
     col = typeOver(col, uv, NEARBLACK);
   } else if (uMode < 2.5) {
-    /* ARCS — stacked rainbow arches centered on your pin; the legs
-       run straight down the sheet like a proper print rainbow */
+    /* ARCS — hand-printed rainbow arches, legs running down the
+       sheet. x = band frequency, y = hand wobble; keylines between
+       bands like a screen print. */
     vec2 c = uP;
     vec2 dv = (uv - c) * ASPECT;
-    float d = dv.y > 0.0 ? length(dv) : abs(dv.x);
-    float idx = floor(d * 7.0);
-    if (idx > 5.0) {
-      col = paper;
-    } else if (mod(idx, 2.0) > 0.5) {
-      col = paper;                          /* paper gaps between bands */
-    } else {
-      float which = mod(floor(idx / 2.0), 3.0);
-      col = which < 1.0 ? uInk : (which < 2.0 ? uInk2 : NEARBLACK);
-    }
+    float ang = atan(dv.y, dv.x);
+    float freq = mix(4.5, 11.0, uP.x);
+    float wob = mix(0.001, 0.014, uP.y);
+    float d = (dv.y > 0.0 ? length(dv) : abs(dv.x))
+            + (dv.y > 0.0 ? sin(ang * 7.0 + uTime * 0.2) : sin(uv.y * 26.0 + uTime * 0.2)) * wob;
+    float idx = mod(floor(d * freq), 6.0);
+    col = idx < 1.0 ? uInk
+        : idx < 2.0 ? paper
+        : idx < 3.0 ? uInk2
+        : idx < 4.0 ? paper
+        : idx < 5.0 ? NEARBLACK
+        : paper;
+    /* screen-print keyline at every band edge (not at the very core,
+       where d≈0 would draw a seam down the middle of the legs) */
+    col = mix(col, NEARBLACK, step(fract(d * freq), 0.05) * 0.8 * step(0.03, d));
     col = typeOver(col, uv, NEARBLACK);
   } else if (uMode < 3.5) {
     /* SPLIT — two inks, off register; overlap overprints darker */

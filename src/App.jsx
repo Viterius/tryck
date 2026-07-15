@@ -20,7 +20,7 @@ export default function App() {
   const [text, setText] = useState("PRESS SOMETHING BEAUTIFUL");
   const [inkId, setInkId] = useState("blue");
   const [mode, setMode] = useState("pop");
-  const [layout, setLayout] = useState("stack");
+  const [layout, setLayout] = useState("corner");
   const [pos, setPos] = useState({ x: 0.35, y: 0.35 }); // pinned params
   const [hover, setHover] = useState(null);
   const [locked, setLocked] = useState(false);
@@ -204,7 +204,7 @@ export default function App() {
 
           <div>
             <p className="label" style={{ marginBottom: 10 }}>Ink</p>
-            <div style={{ display: "flex", gap: 10 }}>
+            <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
               {INKS.map((i) => (
                 <button
                   key={i.id}
