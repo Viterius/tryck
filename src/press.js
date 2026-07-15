@@ -55,17 +55,16 @@ export function drawType(canvas, { text, layout, seed }) {
   const words = (text.trim() || "TRYCK").toUpperCase().split(/\s+/).slice(0, 12);
 
   if (layout === "stack") {
-    /* the OH HI stack: every word the same size, left-aligned; the
-       LAST word fills the width and drags down to the poster's edge */
+    /* the OH HI stack: head words uniform, left-aligned; the LAST
+       word fills the width and drags PAST the bottom edge, so its
+       stems get cropped — peeking out of the poster */
     const contentW = W - mx * 2;
-    const bottom = H - H * 0.055 - mx * 0.4;
     ctx.textBaseline = "top";
     ctx.font = `100px "Anton", sans-serif`;
     const head = words.slice(0, -1);
     const last = words[words.length - 1];
     let y = mx;
     if (head.length) {
-      /* common size: the widest head word fills the column */
       const s = Math.min(
         ...head.map((w) => (100 * contentW) / Math.max(ctx.measureText(w).width, 1)),
         H * 0.2
@@ -77,17 +76,23 @@ export function drawType(canvas, { text, layout, seed }) {
       });
       y += s * 0.06;
     }
-    /* last word: fill the width, then stretch to the bottom edge */
+    /* last word: real cap-height metrics, anchored past the edge */
     ctx.font = `100px "Anton", sans-serif`;
     const ls = (100 * contentW) / Math.max(ctx.measureText(last).width, 1);
-    const room = Math.max(bottom - y, ls * 0.6);
-    const stretch = room / ls;
-    ctx.save();
-    ctx.translate(mx, y);
-    ctx.scale(1, stretch);
     ctx.font = `${ls}px "Anton", sans-serif`;
+    const met = ctx.measureText(last);
+    const capH = met.actualBoundingBoxAscent || ls * 0.72;
+    const cut = (H - y) * 0.055;           /* how much peeks past the edge */
+    /* bottom-anchored always; stretch capped so glyphs stay glyphs —
+       with lots of room the word starts lower instead of distorting */
+    const stretch = Math.min(Math.max((H + cut - y) / capH, 0.55), 2.1);
+    ctx.save();
+    ctx.translate(mx, H + cut);
+    ctx.scale(1, stretch);
+    ctx.textBaseline = "alphabetic";
     ctx.fillText(last, 0, 0);
     ctx.restore();
+    ctx.textBaseline = "top";
   } else if (layout === "corner") {
     /* gallery-poster caption: modest lines, bottom-left, under the art */
     const contentW = W - mx * 2;
@@ -137,9 +142,23 @@ export function drawType(canvas, { text, layout, seed }) {
     ctx.clearRect(0, H - H * 0.055, W, H * 0.055);
   }
 
+  const colophon = `TRYCK N°${seed} — a little poster press · viterius.com`;
   ctx.font = `500 ${Math.max(W * 0.013, 11)}px "IBM Plex Mono", monospace`;
   ctx.textBaseline = "alphabetic";
-  ctx.fillText(`TRYCK N°${seed} — a little poster press · viterius.com`, layout === "corner" || layout === "spine" ? W - mx - ctx.measureText(`TRYCK N°${seed} — a little poster press · viterius.com`).width : mx, H - mx * 0.55);
+  if (layout === "stack") {
+    /* the big word owns the bottom — colophon runs up the right edge */
+    ctx.save();
+    ctx.translate(W - mx * 0.3, H - mx);
+    ctx.rotate(-Math.PI / 2);
+    ctx.fillText(colophon, 0, 0);
+    ctx.restore();
+  } else {
+    ctx.fillText(
+      colophon,
+      layout === "corner" || layout === "spine" ? W - mx - ctx.measureText(colophon).width : mx,
+      H - mx * 0.55
+    );
+  }
 }
 
 /* ── Shaders ────────────────────────────────────────────────────── */
@@ -188,7 +207,8 @@ vec3 material(vec2 uv) {
     float wob = mix(0.004, 0.032, uP.x);
     float d = length(dv) + sin(ang * 6.0 + uTime * 0.4) * wob;
     float band = mod(floor(d * freq), 4.0);
-    col = band < 1.0 ? uInk : (band < 2.0 ? paper : (band < 3.0 ? uInk2 : NEARBLACK));
+    vec3 soft = mix(uInk2, uPaper, 0.55);
+    col = band < 1.0 ? uInk2 : (band < 2.0 ? paper : (band < 3.0 ? NEARBLACK : soft));
     col = typeOver(col, uv);
   } else if (uMode < 1.5) {
     /* RAYS — a fan from beyond the top-right corner, no visible
@@ -201,7 +221,7 @@ vec3 material(vec2 uv) {
     float t = ang / 6.28318 * n + uTime * 0.015;
     float wedge = step(fract(t), duty);
     float which = mod(floor(t), 2.0);
-    col = wedge > 0.5 ? (which < 1.0 ? uInk : uInk2) : paper;
+    col = wedge > 0.5 ? (which < 1.0 ? uInk2 : NEARBLACK) : paper;
     col = typeOver(col, uv);
   } else if (uMode < 2.5) {
     /* ARCS — hand-printed rainbow arches, legs running down the
@@ -216,9 +236,9 @@ vec3 material(vec2 uv) {
     float d = (dv.y > 0.0 ? length(dv) : abs(dv.x)) + wfield * wob
             + 0.5 / freq; /* half-band shift: no boundary at the core */
     float idx = mod(floor(d * freq), 6.0);
-    col = idx < 1.0 ? uInk
+    col = idx < 1.0 ? uInk2
         : idx < 2.0 ? paper
-        : idx < 3.0 ? uInk2
+        : idx < 3.0 ? mix(uInk2, NEARBLACK, 0.55)
         : idx < 4.0 ? paper
         : idx < 5.0 ? NEARBLACK
         : paper;
@@ -256,8 +276,8 @@ vec3 material(vec2 uv) {
     float on = step(0.45, hash(vec2(cid, 31.0)));      /* not every column */
     float body = step(topd, reach) * on;
     float tip = step(reach, topd) * step(topd, reach + 0.05 * hash(vec2(cid, 57.0))) * on;
-    col = mix(col, uInk, body * (0.55 + hash(vec2(cid, 43.0)) * 0.35));
-    col = mix(col, uInk, tip * 0.25);                   /* thinning tail */
+    col = mix(col, uInk2, body * (0.55 + hash(vec2(cid, 43.0)) * 0.35));
+    col = mix(col, uInk2, tip * 0.25);                  /* thinning tail */
     /* the type melts on top */
     float a = 0.0;
     for (int i = 0; i < 7; i++) {
