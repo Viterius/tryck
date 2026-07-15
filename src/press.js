@@ -10,15 +10,19 @@
  */
 
 /* ── Riso ink pairs — paper, ink, second ink ────────────────────── */
+/* tonal pairs, portfolio-style: ink = the voice (strong), ink2 = a
+   MUTED tint of the same hue for the background. Patterns build from
+   ink2 + black + paper only, so posters read as one color family —
+   never a fight between two saturated hues. */
 export const INKS = [
-  { id: "blue", paper: "#f2efe4", ink: "#0078bf", ink2: "#ff48b0" },
-  { id: "pink", paper: "#f6f0e8", ink: "#ff48b0", ink2: "#0078bf" },
-  { id: "orange", paper: "#f4efe3", ink: "#ff6c2f", ink2: "#765ba7" },
-  { id: "green", paper: "#f2efe4", ink: "#00a95c", ink2: "#ff6c2f" },
-  { id: "violet", paper: "#f3f0e9", ink: "#765ba7", ink2: "#ffb511" },
-  { id: "teal", paper: "#f0efe6", ink: "#00838a", ink2: "#f15060" },
-  { id: "red", paper: "#f5f0e6", ink: "#ff665e", ink2: "#3255a4" },
-  { id: "black", paper: "#efece3", ink: "#17150f", ink2: "#f15060" },
+  { id: "blue", paper: "#f2efe4", ink: "#0078bf", ink2: "#a3c6de" },
+  { id: "pink", paper: "#f6f0e8", ink: "#ff48b0", ink2: "#f4bcd8" },
+  { id: "orange", paper: "#f4efe3", ink: "#ff6c2f", ink2: "#f7c3a4" },
+  { id: "green", paper: "#f2efe4", ink: "#00a95c", ink2: "#aad8bc" },
+  { id: "violet", paper: "#f3f0e9", ink: "#765ba7", ink2: "#c6b9da" },
+  { id: "teal", paper: "#f0efe6", ink: "#00838a", ink2: "#a2cbcc" },
+  { id: "red", paper: "#f5f0e6", ink: "#ff665e", ink2: "#f6bcb4" },
+  { id: "black", paper: "#efece3", ink: "#17150f", ink2: "#bcb7a9" },
 ];
 
 /* order matters — index = uMode in the shader.
