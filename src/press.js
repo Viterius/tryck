@@ -256,9 +256,7 @@ vec3 material(vec2 uv) {
     vec2 gg = abs(fract(guv * vec2(26.0, 36.77)) - 0.5);
     float line = 1.0 - step(0.045, min(gg.x, gg.y));
     vec3 lineCol = mix(uInk2, mix(uInk2, NEARBLACK, 0.6), f);
-    col = mix(paper, lineCol, line);
-    /* the lens rim, thin and exact */
-    col = mix(col, NEARBLACK, smoothstep(0.005, 0.0015, abs(d - R)));
+    col = mix(paper, lineCol, line); /* no rim — the warp speaks for itself */
     col = typeOver(col, uv);
   } else if (uMode < 3.5) {
     /* SPLIT — two inks, off register, over a duotone halftone wash
