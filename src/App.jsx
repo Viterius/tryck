@@ -33,6 +33,12 @@ export default function App() {
   const pressRef = useRef(null);
   const rafRef = useRef(0);
   const stateRef = useRef({});
+  /* quality floor: users who ask their OS for stillness get a still
+     press — frozen material time, no choreography, same posters */
+  const reducedRef = useRef(
+    typeof window !== "undefined" &&
+      window.matchMedia("(prefers-reduced-motion: reduce)").matches
+  );
 
   const inks = useMemo(() => INKS.find((i) => i.id === inkId), [inkId]);
   const p = hover ?? pos;
@@ -82,7 +88,7 @@ export default function App() {
       }
       pressRef.current?.render({
         inks: s.inks, mode: s.mode, p: s.p,
-        time: (t - t0) / 1000, lines,
+        time: reducedRef.current ? 2.0 : (t - t0) / 1000, lines,
       });
       rafRef.current = requestAnimationFrame(loop);
     };
@@ -104,14 +110,26 @@ export default function App() {
   const press = async () => {
     if (phase !== "idle") return;
     const pNow = hover ?? pos;
-    setPhase("squash");
 
     let n = no;
-    try {
-      const r = await fetch("/api/press", { method: "POST" });
-      const j = await r.json();
-      if (j.n != null) n = j.n;
-    } catch { /* local number is fine */ }
+    const bump = async () => {
+      try {
+        const r = await fetch("/api/press", { method: "POST" });
+        const j = await r.json();
+        if (j.n != null) n = j.n;
+      } catch { /* local number is fine */ }
+    };
+
+    /* reduced motion: no choreography — press, download, next sheet */
+    if (reducedRef.current) {
+      await bump();
+      exportPoster({ text, layout, seed: n, inks, mode, p: pNow, time: 2.0 });
+      setNo(n + 1);
+      return;
+    }
+
+    setPhase("squash");
+    await bump();
 
     setTimeout(() => setPhase("floatout"), 90);
     setTimeout(() => {
@@ -151,7 +169,29 @@ export default function App() {
         gap: 16, flexWrap: "wrap", padding: "22px clamp(20px, 4vw, 44px) 0",
       }}>
         <div style={{ display: "flex", alignItems: "baseline", gap: 14 }}>
-          <span style={{ fontFamily: "var(--display)", fontSize: 30, letterSpacing: "0.04em" }}>TRYCK</span>
+          {/* the press's own ink on its own name, not quite dry */}
+          <span style={{
+            position: "relative", display: "inline-block",
+            fontFamily: "var(--display)", fontSize: 30,
+            letterSpacing: "0.04em", lineHeight: 1,
+          }}>
+            TRYCK
+            <span aria-hidden="true" style={{
+              position: "absolute", left: "0.52em", bottom: "-0.20em",
+              width: "0.055em", height: "0.26em", background: "var(--ink)",
+              borderRadius: "0 0 0.03em 0.03em",
+            }} />
+            <span aria-hidden="true" style={{
+              position: "absolute", left: "1.48em", bottom: "-0.10em",
+              width: "0.045em", height: "0.16em", background: "var(--ink)",
+              borderRadius: "0 0 0.025em 0.025em",
+            }} />
+            <span aria-hidden="true" style={{
+              position: "absolute", left: "2.58em", bottom: "-0.14em",
+              width: "0.05em", height: "0.20em", background: "var(--ink)",
+              borderRadius: "0 0 0.03em 0.03em",
+            }} />
+          </span>
           <span className="label">a little poster press</span>
         </div>
         <a
